@@ -162,12 +162,14 @@ body {
 .brand-details {
   display: flex;
   flex-direction: column;
+  flex: 1;
 }
 
 .brand-main-row {
   display: flex;
   align-items: center;
-  gap: 20px;
+  justify-content: space-between;
+  width: 100%;
 }
 
 .brand-actions-group {
@@ -910,6 +912,12 @@ label {
     flex-wrap: wrap;
     padding: 0 1rem;
     gap: 8px;
+  }
+
+  .brand-main-row {
+    justify-content: flex-start;
+    width: auto;
+    gap: 12px;
   }
 
   .header-nav {

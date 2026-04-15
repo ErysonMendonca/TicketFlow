@@ -914,6 +914,38 @@ label {
     gap: 8px;
   }
 
+  .modal-overlay {
+    padding: 1rem !important;
+    align-items: center !important;
+  }
+
+  .modal-details-body {
+    flex-direction: column !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    height: auto !important;
+    flex: 1 !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+  }
+
+  .modal-details-main {
+    padding: 1.5rem 1rem !important;
+    overflow-y: visible !important;
+    flex: none !important;
+    width: 100% !important;
+  }
+
+  .modal-details-sidebar {
+    width: 100% !important;
+    border-left: none !important;
+    border-top: 1px solid var(--glass-border) !important;
+    padding: 1.5rem 1rem !important;
+    background: var(--surface) !important;
+    flex: none !important;
+    overflow-y: visible !important;
+  }
+
   .brand-main-row {
     justify-content: flex-start;
     width: auto;

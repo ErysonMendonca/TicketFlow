@@ -577,11 +577,10 @@ export default function App() {
 
       <div className="app-layout">
         <main className="content-area">
-          {loading ? (
-            <LoadingSpinner label="Buscando tickets no Supabase..." />
-          ) : view === 'tickets' ? (
+          {view === 'tickets' ? (
             <UserDashboard
               tickets={filteredTickets}
+              isLoading={loading}
               onOpenModal={() => setIsModalOpen(true)}
               search={search}
               setSearch={setSearch}
@@ -599,6 +598,7 @@ export default function App() {
           ) : view === 'kanban' ? (
             <DevKanban
               tickets={filteredTickets}
+              isLoading={loading}
               onUpdateStatus={updateTicketStatus}
               onUpdateUrgency={(tid, urg) => updateTicketDetails(tid, { urgency: urg })}
               user={user}
@@ -644,7 +644,7 @@ export default function App() {
 }
 
 // --- Dashboard do Usuário ---
-function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, user, systems }) {
+function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, user, systems, isLoading }) {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
   useEffect(() => {
@@ -677,7 +677,11 @@ function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, user
           gap: '1rem'
         }}
       >
-        {tickets.length === 0 ? (
+        {isLoading ? (
+          <div className="glass" style={{ padding: '2rem', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+            <LoadingSpinner label="Sincronizando tickets..." />
+          </div>
+        ) : tickets.length === 0 ? (
           <div className="glass" style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>
             Nenhum ticket encontrado.
           </div>
@@ -732,7 +736,7 @@ function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, user
 }
 
 // --- Kanban do Desenvolvedor ---
-function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketClick, systems, allUsers }) {
+function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketClick, systems, allUsers, isLoading }) {
   const [draggedTicket, setDraggedTicket] = useState(null);
   const [dropTarget, setDropTarget] = useState(null);
   const [filterSearch, setFilterSearch] = useState('');
@@ -809,7 +813,12 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
       </div>
 
       <div className="kanban-board-container" style={{ display: 'flex', gap: '1rem', flex: 1, overflowX: 'auto', paddingBottom: '1rem' }}>
-        {DEV_STATUS.map(column => {
+        {isLoading ? (
+          <div className="glass" style={{ width: '100%', padding: '4rem', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+            <LoadingSpinner label="Organizando quadro..." />
+          </div>
+        ) : (
+          DEV_STATUS.map(column => {
           const columnTickets = visibleTickets.filter(t => t.status === column.id);
           const isTarget = dropTarget === column.id;
 
@@ -868,7 +877,8 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
               </div>
             </div>
           );
-        })}
+        })
+      )}
       </div>
     </div>
   );

@@ -224,7 +224,31 @@ function AppHeader({ currentView, setView, user, theme, toggleTheme, onLogout })
           <div className="brand-logo">
             <ShieldCheck size={24} />
           </div>
-          <span className="brand-name">TicketFlow <small style={{ opacity: 0.6, fontSize: '0.7em', fontWeight: 400, marginLeft: '4px' }}>v1.1.0</small></span>
+          <div className="brand-details">
+            <div className="brand-main-row">
+              <span className="brand-name">TicketFlow <small style={{ opacity: 0.6, fontSize: '0.7em', fontWeight: 400, marginLeft: '4px' }}>v1.1.0</small></span>
+              
+              {user && (
+                <div className="brand-actions-group">
+                  <button className="icon-btn-compact theme-toggle" onClick={toggleTheme}>
+                    {theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
+                  </button>
+                  
+                  <div className="user-avatar-wrapper">
+                    <img 
+                      src={user.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.email}`} 
+                      className="user-avatar-mini" 
+                      alt={user.name} 
+                    />
+                  </div>
+
+                  <button className="icon-btn-compact logout" onClick={onLogout}>
+                    <LogOut size={16} />
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
         <nav className="header-nav">
@@ -239,27 +263,6 @@ function AppHeader({ currentView, setView, user, theme, toggleTheme, onLogout })
             </button>
           ))}
         </nav>
-
-        <div className="header-actions">
-          <button className="icon-btn theme-toggle-header" onClick={toggleTheme} title="Alternar Tema">
-            {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
-          </button>
-
-          {user ? (
-            <div className="user-menu-wrapper">
-              <div className="user-badge">
-                <img src={user.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.email}`} className="user-avatar-mini" alt={user.name} />
-                <div className="user-text">
-                  <span className="u-name">{user.name}</span>
-                  <span className="u-role">{user.role}</span>
-                </div>
-              </div>
-              <button className="icon-btn logout" onClick={onLogout} title="Sair">
-                <LogOut size={18} />
-              </button>
-            </div>
-          ) : null}
-        </div>
       </div>
     </header>
   );
@@ -711,21 +714,30 @@ function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, user
                 </div>
               </div>
 
-              <div className="user-dash-actions" style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(0,0,0,0.05)', padding: '4px 10px', borderRadius: '8px', width: 'fit-content' }}>
-                  <UserIcon size={14} style={{ color: 'var(--text-muted)' }} />
-                  <span style={{ fontSize: '0.8125rem', fontWeight: '500' }}>{ticket.responsible || 'Sem resp.'}</span>
+              <div className="user-dash-actions" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(0,0,0,0.05)', padding: '4px 10px', borderRadius: '8px', width: 'fit-content' }}>
+                    <UserIcon size={14} style={{ color: 'var(--text-muted)' }} />
+                    <span style={{ fontSize: '0.8125rem', fontWeight: '500' }}>{ticket.responsible || 'Sem resp.'}</span>
+                  </div>
+
+                  {user && user.role === 'admin' && (
+                    <button 
+                      className="btn-trash-mini" 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDelete(ticket.id);
+                      }} 
+                      title="Excluir Ticket"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  )}
                 </div>
 
-                <div style={{ minWidth: '100px', textAlign: 'center' }}>
+                <div style={{ textAlign: 'right' }}>
                   <StatusBadge id={ticket.status} />
                 </div>
-
-                {user && (user.role === 'admin' || user.id === ticket.created_by) && (
-                  <button className="btn btn-ghost" onClick={() => onDelete(ticket.id)} style={{ padding: '8px', color: '#ef4444', border: 'none' }}>
-                    <Trash2 size={18} />
-                  </button>
-                )}
               </div>
             </motion.div>
           ))

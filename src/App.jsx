@@ -202,7 +202,7 @@ function AppHeader({ currentView, setView, user, theme, toggleTheme, onLogout })
            <div className="brand-logo">
               <ShieldCheck size={24} />
            </div>
-           <span className="brand-name">TicketFlow</span>
+           <span className="brand-name">TicketFlow <small style={{ opacity: 0.6, fontSize: '0.7em', fontWeight: 400, marginLeft: '4px' }}>v1.1.0-preview</small></span>
         </div>
 
         <nav className="header-nav">

@@ -297,6 +297,14 @@ export default function App() {
   const [hash, setHash] = useState(window.location.hash);
   const [viewingTicket, setViewingTicket] = useState(null);
 
+  const [confirmConfig, setConfirmConfig] = useState({ isOpen: false, title: '', message: '', onConfirm: null });
+
+  const requestConfirm = (title, message, onConfirm) => {
+    setConfirmConfig({ isOpen: true, title, message, onConfirm });
+  };
+
+  const closeConfirm = () => setConfirmConfig({ ...confirmConfig, isOpen: false });
+
   const [systemsList, setSystemsList] = useState([]);
   const [systemLogs, setSystemLogs] = useState([]);
   const [allUsers, setAllUsers] = useState([]);
@@ -524,16 +532,42 @@ export default function App() {
     }
   };
 
-  const deleteTicket = async (id) => {
-    if (window.confirm('Excluir este ticket?')) {
-      try {
-        const { error } = await api.from('tickets').delete().eq('id', id);
-        if (error) throw error;
-        setTickets(tickets.filter(t => t.id !== id));
-      } catch (err) {
-        toast.error('Erro ao excluir: ' + err.message);
+  const deleteTicket = (id) => {
+    requestConfirm(
+      'Excluir Ticket',
+      'Tem certeza que deseja remover este ticket permanentemente?',
+      async () => {
+        try {
+          const { error } = await api.from('tickets').delete().eq('id', id);
+          if (error) throw error;
+          setTickets(tickets.filter(t => t.id !== id));
+          toast.success('Ticket excluído');
+        } catch (err) {
+          toast.error('Erro ao excluir: ' + err.message);
+        }
       }
+    );
+  };
+
+  const handleDeleteUser = (uId, uName) => {
+    if (uId === user.id) {
+      toast.error("Não é possível remover a si mesmo.");
+      return;
     }
+    requestConfirm(
+      'Remover Membro',
+      `Deseja remover ${uName} da equipe? Esta ação não pode ser desfeita.`,
+      async () => {
+        const { error } = await api.from('users').delete().eq('id', uId);
+        if (!error) { 
+          toast.success('Usuário removido'); 
+          // Atualiza a lista de usuários se necessário ou recarrega
+          window.location.reload(); // Simples recarregamento para atualizar a view
+        } else { 
+          toast.error('Erro ao remover usuário.'); 
+        }
+      }
+    );
   };
 
   const visibleTickets = (user?.role === 'dev')
@@ -602,7 +636,7 @@ export default function App() {
                   systems={systemsList}
                 />
               ) : view === 'users' ? (
-                <UsersView user={user} />
+                <UsersView user={user} onDeleteUser={handleDeleteUser} />
               ) : view === 'systems' ? (
                 <SystemsView user={user} systems={systemsList} onUpdate={async () => {
                   const { data } = await api.from('systems').select('*');
@@ -655,6 +689,8 @@ export default function App() {
           />
         )}
       </AnimatePresence>
+
+      <ConfirmationModal config={confirmConfig} onClose={closeConfirm} />
     </>
   );
 }
@@ -1345,16 +1381,8 @@ function UsersView({ user }) {
     if (!error) { toast.success('Membro criado!'); setIsNewUserModalOpen(false); fetchUsers(); }
   };
 
-  const handleDeleteUser = async (uId) => {
-    if (uId === user.id) {
-      toast.error("Não é possível remover a si mesmo.");
-      return;
-    }
-    if (window.confirm('Tem certeza que deseja remover este membro da equipe?')) {
-      const { error } = await api.from('users').delete().eq('id', uId);
-      if (!error) { toast.success('Usuário removido'); fetchUsers(); }
-      else { toast.error('Erro ao remover usuário.'); }
-    }
+  const handleDeleteUserInternal = (uId, uName) => {
+    onDeleteUser(uId, uName);
   };
 
   if (loading) return <div style={{ padding: '3rem', textAlign: 'center' }}>Carregando...</div>;
@@ -1419,7 +1447,7 @@ function UsersView({ user }) {
                   </td>
                   {user?.role === 'admin' && (
                     <td style={{ padding: '1.25rem', textAlign: 'right' }}>
-                      <button className="icon-btn logout" onClick={() => handleDeleteUser(u.id)} title="Excluir Usuário">
+                      <button className="icon-btn logout" onClick={() => handleDeleteUserInternal(u.id, u.name)} title="Excluir Usuário">
                         <Trash2 size={16} />
                       </button>
                     </td>
@@ -1847,5 +1875,50 @@ function LogsView() {
         </div>
       </div>
     </div>
+  );
+}
+
+function ConfirmationModal({ config, onClose }) {
+  if (!config.isOpen) return null;
+  return createPortal(
+    <div className="overlay" onClick={onClose}>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 20 }}
+        className="glass modal"
+        style={{ width: '400px', padding: '2.5rem', textAlign: 'center', maxWidth: '90vw' }}
+        onClick={e => e.stopPropagation()}
+      >
+        <div style={{ 
+          width: '64px', 
+          height: '64px', 
+          borderRadius: '50%', 
+          background: 'rgba(239, 68, 68, 0.1)', 
+          color: '#ef4444', 
+          display: 'flex', 
+          alignItems: 'center', 
+          justifyContent: 'center', 
+          margin: '0 auto 1.5rem' 
+        }}>
+          <AlertTriangle size={32} />
+        </div>
+        <h2 style={{ marginBottom: '1rem', fontSize: '1.4rem', fontWeight: '700' }}>{config.title}</h2>
+        <p style={{ marginBottom: '2rem', lineHeight: '1.6', color: 'var(--text-muted)' }}>
+          {config.message}
+        </p>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+          <button onClick={onClose} className="btn btn-ghost" style={{ width: '100%' }}>Cancelar</button>
+          <button 
+            onClick={() => { config.onConfirm(); onClose(); }} 
+            className="btn btn-primary" 
+            style={{ width: '100%', background: '#ef4444', border: 'none', color: 'white' }}
+          >
+            Confirmar
+          </button>
+        </div>
+      </motion.div>
+    </div>,
+    document.body
   );
 }

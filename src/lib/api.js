@@ -47,8 +47,8 @@ class ApiQueryBuilder {
         return { data: null, error: { message: `Resposta não-JSON (${res.status}): ${text.substring(0, 100)}` } };
       }
     } catch (e) {
-      console.error('Erro na API:', e);
-      return { data: null, error: { message: e.message || 'Erro desconhecido na rede' } };
+      console.error('Erro de Conexão na API:', e);
+      return { data: null, error: { message: `Erro de rede/cliente: ${e.message}` } };
     }
   }
 

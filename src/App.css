@@ -1090,7 +1090,7 @@ label {
 
 .app-footer {
   width: 100%;
-  padding: 1rem 1.5rem;
+  padding: 0.5rem 1.5rem;
   margin-top: auto;
   text-align: center;
   background: transparent;
@@ -1103,14 +1103,14 @@ label {
 }
 
 .footer-copyright {
-  font-size: 0.875rem;
+  font-size: 0.65rem;
   font-weight: 600;
   color: var(--text-main);
   letter-spacing: -0.01em;
 }
 
 .footer-powered {
-  font-size: 0.75rem;
+  font-size: 0.6rem;
   font-weight: 500;
   opacity: 0.8;
   color: var(--primary);

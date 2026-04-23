@@ -92,54 +92,58 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Ação SQL inválida' }, { status: 400 });
     }
 
-    // Aumentar sort_buffer_size para a sessão atual para evitar erro de ordenação em campos grandes (JSON)
-    await pool.query('SET SESSION sort_buffer_size = 4194304'); // 4MB
-    
-    const [rows] = await pool.query(query, values);
+    // Obter uma conexão única do pool para garantir que o SET SESSION afete a query subsequente
+    const connection = await pool.getConnection();
+    try {
+      // Aumentar sort_buffer_size para a sessão atual para evitar erro de ordenação em campos grandes (JSON)
+      await connection.query('SET SESSION sort_buffer_size = 8388608'); // 8MB
+      
+      const [rows] = await connection.query(query, values);
 
-    // Formatação de retorno padrão de resposta
-    const parseJsonCols = (dataSet) => {
-      if (!Array.isArray(dataSet)) return dataSet;
-      return dataSet.map(r => {
-         for (let k in r) {
-            if (typeof r[k] === 'string' && ((r[k].startsWith('[') && r[k].endsWith(']')) || (r[k].startsWith('{') && r[k].endsWith('}')))) {
-               try { r[k] = JSON.parse(r[k]); } catch(e) {}
-            }
-         }
-         return r;
-      });
-    };
+      // Formatação de retorno padrão de resposta
+      const parseJsonCols = (dataSet) => {
+        if (!Array.isArray(dataSet)) return dataSet;
+        return dataSet.map(r => {
+           for (let k in r) {
+              if (typeof r[k] === 'string' && ((r[k].startsWith('[') && r[k].endsWith(']')) || (r[k].startsWith('{') && r[k].endsWith('}')))) {
+                 try { r[k] = JSON.parse(r[k]); } catch(e) {}
+              }
+           }
+           return r;
+        });
+      };
 
-    let resultData = rows;
-    
-    if (action === 'insert' || action === 'upsert') {
-      if (rows && rows.insertId) {
-        const [insertedRow] = await pool.query(`SELECT * FROM ${table} WHERE id = ?`, [rows.insertId]);
-        
-        if (insertedRow && insertedRow.length > 0) {
-           resultData = parseJsonCols(insertedRow);
+      let resultData = rows;
+      
+      if (action === 'insert' || action === 'upsert') {
+        if (rows && rows.insertId) {
+          const [insertedRow] = await connection.query(`SELECT * FROM ${table} WHERE id = ?`, [rows.insertId]);
+          
+          if (insertedRow && insertedRow.length > 0) {
+             resultData = parseJsonCols(insertedRow);
+          } else {
+             const fallbackData = Array.isArray(data) ? data : [data];
+             fallbackData[0].id = rows.insertId;
+             resultData = fallbackData;
+          }
         } else {
-           // Fallback Seguro
-           const fallbackData = Array.isArray(data) ? data : [data];
-           fallbackData[0].id = rows.insertId;
-           resultData = fallbackData;
+          const fallbackData = Array.isArray(data) ? data : [data];
+          fallbackData[0].id = Date.now();
+          resultData = fallbackData;
         }
+      } else if (action === 'update' || action === 'delete') {
+        resultData = null; 
       } else {
-        // Fallback Seguro 2: caso insertId nao venha
-        const fallbackData = Array.isArray(data) ? data : [data];
-        fallbackData[0].id = Date.now();
-        resultData = fallbackData;
+        resultData = parseJsonCols(rows);
+        if (single && Array.isArray(resultData)) {
+          resultData = resultData.length > 0 ? resultData[0] : null;
+        }
       }
-    } else if (action === 'update' || action === 'delete') {
-      resultData = null; 
-    } else {
-      resultData = parseJsonCols(rows);
-      if (single && Array.isArray(resultData)) {
-        resultData = resultData.length > 0 ? resultData[0] : null;
-      }
-    }
 
-    return NextResponse.json({ data: resultData, error: null });
+      return NextResponse.json({ data: resultData, error: null });
+    } finally {
+      connection.release(); // Sempre liberar a conexão de volta para o pool
+    }
 
   } catch (error) {
     console.error('Database API Error:', error);

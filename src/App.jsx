@@ -1471,7 +1471,11 @@ function SystemsView({ user, systems, onUpdate }) {
     const name = fd.get('name');
     try {
       if (activeModal === 'new_system') {
+<<<<<<< Updated upstream
         const { error } = await api.from('systems').insert([{
+=======
+        const { error } = await supabase.from('systems').insert([{
+>>>>>>> Stashed changes
           name,
           primary_responsibles: []
         }]);

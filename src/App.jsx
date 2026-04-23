@@ -304,15 +304,20 @@ export default function App() {
   useEffect(() => {
     const initData = async () => {
       // Carregar Sistemas
-      const { data: sysData } = await api.from('systems').select('*');
-      if (sysData && sysData.length > 0) setSystemsList(sysData);
-      else setSystemsList(PLATFORMS); // Fallback caso tabela não exista ainda
+      try {
+        const { data: sysData, error: sysErr } = await api.from('systems').select('*');
+        if (!sysErr && sysData && sysData.length > 0) setSystemsList(sysData);
+        else setSystemsList(PLATFORMS);
+      } catch(e) { setSystemsList(PLATFORMS); }
 
       // Carregar Usuários
-      const { data: userData } = await api.from('users').select('*').order('name');
-      if (userData) setAllUsers(userData);
+      try {
+        const { data: userData } = await api.from('users').select('*').order('name');
+        if (userData) setAllUsers(userData);
+      } catch(e) {}
 
-      fetchTickets();
+      await fetchTickets();
+
     };
     initData();
   }, []);

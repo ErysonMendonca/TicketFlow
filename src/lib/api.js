@@ -27,7 +27,7 @@ class ApiQueryBuilder {
   limit(num) { this.query.limit = num; return this; }
   single() { this.query.single = true; return this; }
 
-  async then(resolve) {
+  async execute() {
     try {
       const res = await fetch('/api/data', {
         method: 'POST',
@@ -39,18 +39,21 @@ class ApiQueryBuilder {
       if (contentType && contentType.includes('application/json')) {
         const result = await res.json();
         if (!res.ok) {
-          resolve({ data: null, error: result.error || { message: `Erro HTTP ${res.status}` } });
-        } else {
-          resolve(result);
+          return { data: null, error: result.error || { message: `Erro HTTP ${res.status}` } };
         }
+        return result;
       } else {
         const text = await res.text();
-        resolve({ data: null, error: { message: `Resposta não-JSON (${res.status}): ${text.substring(0, 100)}` } });
+        return { data: null, error: { message: `Resposta não-JSON (${res.status}): ${text.substring(0, 100)}` } };
       }
     } catch (e) {
       console.error('Erro na API:', e);
-      resolve({ data: null, error: { message: e.message || 'Erro desconhecido na rede' } });
+      return { data: null, error: { message: e.message || 'Erro desconhecido na rede' } };
     }
+  }
+
+  then(onFulfilled, onRejected) {
+    return this.execute().then(onFulfilled, onRejected);
   }
 }
 

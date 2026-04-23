@@ -1,14 +1,16 @@
 import { NextResponse } from 'next/server';
-import { pool } from '../../../../lib/db';
+import { pool } from '../../../lib/db.js';
 
 export async function POST(request) {
   try {
     const body = await request.json();
+    console.log('API Request:', body.action, 'on table:', body.table);
     const { action, table, cols = '*', data, filters = [], order, limit, single } = body;
 
     // Proteção super básica contra SQL Injection no nome da tabela e chamadas indesejadas
     const allowedTables = ['users', 'systems', 'tickets', 'system_logs', 'ticket_messages'];
     if (!allowedTables.includes(table)) {
+      console.warn('Tabela não permitida:', table);
       return NextResponse.json({ error: 'Tabela não permitida' }, { status: 400 });
     }
 

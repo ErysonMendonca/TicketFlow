@@ -35,6 +35,8 @@ body {
   background-attachment: fixed;
   color: var(--text-main);
   height: 100vh;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
   transition: background 0.3s ease, color 0.3s ease;
@@ -392,9 +394,9 @@ body {
 /* ========================= */
 
 .app-layout {
-  height: calc(100vh - 230px); /* Ajuste dinmico considerando Header + NavBar + novo tamanho de Logo + margins */
+  flex: 1;
   width: 100%;
-  padding: 0 1.5rem;
+  padding: 0 1.5rem 0.5rem;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -404,9 +406,11 @@ body {
   flex: 1;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
-  padding-bottom: 0.5rem;
+  overflow-y: auto;
+  padding-right: 4px; /* Space for scrollbar */
 }
+
+
 
 /* ========================= */
 /* Forms                     */
@@ -630,8 +634,14 @@ label {
 /* Login Screen              */
 /* ========================= */
 
-.login-container {
+.login-page {
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.login-container {
+  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1080,15 +1090,16 @@ label {
 
 .app-footer {
   width: 100%;
-  padding: 0.5rem 1.5rem 1.5rem;
+  padding: 1rem 1.5rem;
   margin-top: auto;
   text-align: center;
   background: transparent;
-  border-top: none;
+  border-top: 1px solid var(--glass-border);
   color: var(--text-muted);
   display: flex;
   flex-direction: column;
   gap: 4px;
+  flex-shrink: 0;
 }
 
 .footer-copyright {

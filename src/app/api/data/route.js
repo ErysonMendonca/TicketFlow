@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { pool } from '../../../lib/db.js';
+import { pool } from '@/lib/db.js';
 
 export async function POST(request) {
   try {
@@ -92,6 +92,9 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Ação SQL inválida' }, { status: 400 });
     }
 
+    // Aumentar sort_buffer_size para a sessão atual para evitar erro de ordenação em campos grandes (JSON)
+    await pool.query('SET SESSION sort_buffer_size = 4194304'); // 4MB
+    
     const [rows] = await pool.query(query, values);
 
     // Formatação de retorno padrão de resposta

@@ -46,7 +46,7 @@ import {
 } from 'lucide-react';
 
 import { motion, AnimatePresence } from 'framer-motion';
-import { supabase } from './lib/supabase';
+import { api } from './lib/api';
 import toast, { Toaster } from 'react-hot-toast';
 import { PLATFORMS, DEV_STATUS, URGENCY_LEVELS, OTHER_STATUS, MOCK_USERS } from './constants';
 
@@ -97,11 +97,11 @@ const StatusBadge = ({ id }) => {
 
 // --- Componente de Loading ---
 const LoadingSpinner = ({ label = 'Carregando informações...' }) => (
-  <div style={{ 
-    display: 'flex', 
-    flexDirection: 'column', 
-    alignItems: 'center', 
-    justifyContent: 'center', 
+  <div style={{
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
     padding: '4rem',
     gap: '1rem',
     color: 'var(--text-muted)'
@@ -118,7 +118,7 @@ const LoadingSpinner = ({ label = 'Carregando informações...' }) => (
 );
 
 // --- Tela de Login ---
-function LoginScreen({ onLogin }) {
+function LoginScreen({ onLogin, theme }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -130,7 +130,7 @@ function LoginScreen({ onLogin }) {
     setIsLoading(true);
 
     try {
-      const { data, error: dbError } = await supabase
+      const { data, error: dbError } = await api
         .from('users')
         .select('*')
         .eq('email', email)
@@ -157,9 +157,11 @@ function LoginScreen({ onLogin }) {
         className="glass login-card"
       >
         <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-          <div style={{ width: '60px', height: '60px', borderRadius: '16px', background: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1rem', color: 'white' }}>
-            <ShieldCheck size={32} />
-          </div>
+          <img 
+            src={theme === 'dark' ? '/logomarca_white.png' : '/logomarca_black.png'} 
+            className="login-logo" 
+            alt="TynkeTech" 
+          />
           <h1 style={{ fontSize: '1.5rem', fontWeight: '700' }}>Acesso ao Sistema</h1>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>Entre com suas credenciais</p>
         </div>
@@ -221,33 +223,32 @@ function AppHeader({ currentView, setView, user, theme, toggleTheme, onLogout })
     <header className="app-header">
       <div className="header-container">
         <div className="header-brand">
-          <div className="brand-logo">
-            <ShieldCheck size={24} />
-          </div>
-          <div className="brand-details">
-            <div className="brand-main-row">
-              <span className="brand-name">TicketFlow <small style={{ opacity: 0.6, fontSize: '0.7em', fontWeight: 400, marginLeft: '4px' }}>v1.1.0</small></span>
-              
-              {user && (
-                <div className="brand-actions-group">
-                  <button className="icon-btn-compact theme-toggle" onClick={toggleTheme}>
-                    {theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
-                  </button>
-                  
-                  <div className="user-avatar-wrapper">
-                    <img 
-                      src={user.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.email}`} 
-                      className="user-avatar-mini" 
-                      alt={user.name} 
-                    />
-                  </div>
+          <img 
+            src={theme === 'light' ? '/logomarca_black.png' : '/logomarca_white.png'} 
+            className="brand-logo-img" 
+            alt="TynkeTech" 
+          />
+          
+          <div className="brand-actions-group">
+            <button className="icon-btn-compact theme-toggle" onClick={toggleTheme} title="Alternar Tema">
+              {theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
+            </button>
 
-                  <button className="icon-btn-compact logout" onClick={onLogout}>
-                    <LogOut size={16} />
-                  </button>
+            {user && (
+              <>
+                <div className="user-avatar-wrapper">
+                  <img 
+                    src={user.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.email}`} 
+                    className="user-avatar-mini" 
+                    alt={user.name} 
+                  />
                 </div>
-              )}
-            </div>
+
+                <button className="icon-btn-compact logout" onClick={onLogout} title="Sair">
+                  <LogOut size={16} />
+                </button>
+              </>
+            )}
           </div>
         </div>
 
@@ -265,6 +266,23 @@ function AppHeader({ currentView, setView, user, theme, toggleTheme, onLogout })
         </nav>
       </div>
     </header>
+  );
+}
+
+function UserDashboardWrapper({ children }) {
+  return <div className="user-dashboard-wrapper">{children}</div>;
+}
+
+function AppFooter() {
+  return (
+    <footer className="app-footer">
+      <div className="footer-copyright">
+        Copyright © 2026 TynkeTech. Todos os direitos reservados
+      </div>
+      <div className="footer-powered">
+        Powered by Zaya Software
+      </div>
+    </footer>
   );
 }
 
@@ -286,12 +304,12 @@ export default function App() {
   useEffect(() => {
     const initData = async () => {
       // Carregar Sistemas
-      const { data: sysData } = await supabase.from('systems').select('*');
+      const { data: sysData } = await api.from('systems').select('*');
       if (sysData && sysData.length > 0) setSystemsList(sysData);
       else setSystemsList(PLATFORMS); // Fallback caso tabela não exista ainda
 
       // Carregar Usuários
-      const { data: userData } = await supabase.from('users').select('*').order('name');
+      const { data: userData } = await api.from('users').select('*').order('name');
       if (userData) setAllUsers(userData);
 
       fetchTickets();
@@ -308,7 +326,7 @@ export default function App() {
 
   const fetchLogs = async () => {
     try {
-      const { data, error } = await supabase.from('system_logs').select('*').order('created_at', { ascending: false }).limit(200);
+      const { data, error } = await api.from('system_logs').select('*').order('created_at', { ascending: false }).limit(200);
       if (error) throw error;
       setSystemLogs(data || []);
     } catch (err) {
@@ -322,8 +340,8 @@ export default function App() {
       const actorName = currentUser ? currentUser.name : 'Visitante';
       const actorRole = currentUser ? currentUser.role : 'ghost';
 
-      const { error } = await supabase.from('system_logs').insert([{
-        ticket_id: ticketId ? ticketId : 0,
+      const { error } = await api.from('system_logs').insert([{
+        ticket_id: ticketId ? ticketId : null,
         action_type: actionType,
         old_value: oldValue,
         new_value: newValue,
@@ -332,7 +350,7 @@ export default function App() {
       }]);
 
       if (error) {
-        console.error('ERRO SUPABASE LOGGER:', error);
+        console.error('ERRO MYSQL LOGGER:', error.message || error);
       }
     } catch (err) {
       console.warn('Falha estrutural na telemetria:', err);
@@ -346,37 +364,14 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const channel = supabase.channel('realtime_tickets')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'tickets' }, (payload) => {
-        if (payload.eventType === 'INSERT') {
-          setTickets(prev => {
-            if (prev.find(t => t.id === payload.new.id)) return prev;
-            return [payload.new, ...prev];
-          });
-
-          const currentUser = JSON.parse(localStorage.getItem('currentUser'));
-          if (!currentUser || currentUser.id !== payload.new.created_by) {
-            toast.success(`Novo Ticket #${payload.new.id} Recebido!`, { icon: '🚨' });
-          }
-        }
-        else if (payload.eventType === 'UPDATE') {
-          setTickets(prev => prev.map(t => t.id === payload.new.id ? payload.new : t));
-        }
-        else if (payload.eventType === 'DELETE') {
-          setTickets(prev => prev.filter(t => t.id !== payload.old.id));
-        }
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    // Realtime removido na migração MySQL
+    return () => {};
   }, []);
 
   async function fetchTickets() {
     try {
       setLoading(true);
-      const { data, error } = await supabase
+      const { data, error } = await api
         .from('tickets')
         .select('*')
         .order('created_at', { ascending: false });
@@ -413,7 +408,7 @@ export default function App() {
 
   const handleLogout = async () => {
     if (user) {
-      await supabase.from('users').update({ is_online: false }).eq('id', user.id);
+      await api.from('users').update({ is_online: false }).eq('id', user.id);
     }
     await logAction(0, 'USER_LOGOUT', null, 'Saída do Sistema');
     setUser(null);
@@ -431,18 +426,18 @@ export default function App() {
           const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
           const filePath = `${fileName}`;
 
-          const { error: uploadError } = await supabase.storage
-            .from('ticket-attachments')
-            .upload(filePath, file);
+          const fileToBase64 = (f) => new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.readAsDataURL(f);
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = e => reject(e);
+          });
 
-          if (uploadError) throw new Error('Falha no upload: ' + uploadError.message);
-
-          const { data: publicUrlData } = supabase.storage
-            .from('ticket-attachments')
-            .getPublicUrl(filePath);
+          // Upload alternativo: converte para Base64 para salvar direto no JSON do MySQL local
+          const publicUrl = await fileToBase64(file);
 
           uploadedAttachments.push({
-            url: publicUrlData.publicUrl,
+            url: publicUrl,
             type: file.type.startsWith('video/') ? 'video' : 'image',
             name: file.name
           });
@@ -453,7 +448,7 @@ export default function App() {
       delete ticketToInsert.files;
       ticketToInsert.attachments = uploadedAttachments;
 
-      const { data, error } = await supabase
+      const { data, error } = await api
         .from('tickets')
         .insert([{
           ...ticketToInsert,
@@ -483,7 +478,7 @@ export default function App() {
   const updateTicketDetails = async (ticketId, updates) => {
     const atualizar = async () => {
       const oldTicket = tickets.find(t => t.id === ticketId);
-      const { error } = await supabase
+      const { error } = await api
         .from('tickets')
         .update(updates)
         .eq('id', ticketId);
@@ -507,7 +502,7 @@ export default function App() {
   const updateTicketStatus = async (ticketId, newStatus) => {
     try {
       const oldTicket = tickets.find(t => t.id === ticketId);
-      const { error } = await supabase
+      const { error } = await api
         .from('tickets')
         .update({ status: newStatus })
         .eq('id', ticketId);
@@ -527,7 +522,7 @@ export default function App() {
   const deleteTicket = async (id) => {
     if (window.confirm('Excluir este ticket?')) {
       try {
-        const { error } = await supabase.from('tickets').delete().eq('id', id);
+        const { error } = await api.from('tickets').delete().eq('id', id);
         if (error) throw error;
         setTickets(tickets.filter(t => t.id !== id));
       } catch (err) {
@@ -554,13 +549,14 @@ export default function App() {
             {theme === 'light' ? <Moon size={24} /> : <Sun size={24} />}
           </button>
         </div>
-        <LoginScreen onLogin={async (userData) => {
-          await supabase.from('users').update({ is_online: true }).eq('id', userData.id);
+        <LoginScreen theme={theme} onLogin={async (userData) => {
+          await api.from('users').update({ is_online: true }).eq('id', userData.id);
           localStorage.setItem('currentUser', JSON.stringify(userData));
           await logAction(0, 'USER_LOGIN', null, 'Acesso Autorizado');
           setUser(userData);
           window.location.hash = '';
         }} />
+        <AppFooter />
       </div>
     );
   }
@@ -580,48 +576,60 @@ export default function App() {
 
       <div className="app-layout">
         <main className="content-area">
-          {view === 'tickets' ? (
-            <UserDashboard
-              tickets={filteredTickets}
-              isLoading={loading}
-              onOpenModal={() => setIsModalOpen(true)}
-              search={search}
-              setSearch={setSearch}
-              onDelete={deleteTicket}
-              user={user}
-              systems={systemsList}
-            />
-          ) : view === 'users' ? (
-            <UsersView user={user} />
-          ) : view === 'systems' ? (
-            <SystemsView user={user} systems={systemsList} onUpdate={async () => {
-              const { data } = await supabase.from('systems').select('*');
-              if (data) setSystemsList(data);
-            }} />
-          ) : view === 'kanban' ? (
-            <DevKanban
-              tickets={filteredTickets}
-              isLoading={loading}
-              onUpdateStatus={updateTicketStatus}
-              onUpdateUrgency={(tid, urg) => updateTicketDetails(tid, { urgency: urg })}
-              user={user}
-              allUsers={allUsers}
-              systems={systemsList}
-              onTicketClick={async (t) => {
-                setViewingTicket(t);
-                if (user && (user.role === 'dev' || user.role === 'admin')) {
-                  await logAction(t.id, 'TICKET_VIEWED_FIRST_TIME', null, null);
-                }
-              }}
-            />
-          ) : view === 'analytics' ? (
-            <AnalyticsDashboard tickets={filteredTickets} />
-          ) : view === 'logs' ? (
-            <LogsView />
-          ) : (
-            <div style={{ padding: '2rem' }}>Página não encontrada.</div>
-          )}
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={view}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.2 }}
+              style={{ height: '100%', display: 'flex', flexDirection: 'column' }}
+            >
+              {view === 'tickets' ? (
+                <UserDashboard
+                  tickets={filteredTickets}
+                  isLoading={loading}
+                  onOpenModal={() => setIsModalOpen(true)}
+                  search={search}
+                  setSearch={setSearch}
+                  onDelete={deleteTicket}
+                  user={user}
+                  systems={systemsList}
+                />
+              ) : view === 'users' ? (
+                <UsersView user={user} />
+              ) : view === 'systems' ? (
+                <SystemsView user={user} systems={systemsList} onUpdate={async () => {
+                  const { data } = await api.from('systems').select('*');
+                  if (data) setSystemsList(data);
+                }} />
+              ) : view === 'kanban' ? (
+                <DevKanban
+                  tickets={filteredTickets}
+                  isLoading={loading}
+                  onUpdateStatus={updateTicketStatus}
+                  onUpdateUrgency={(tid, urg) => updateTicketDetails(tid, { urgency: urg })}
+                  user={user}
+                  allUsers={allUsers}
+                  systems={systemsList}
+                  onTicketClick={async (t) => {
+                    setViewingTicket(t);
+                    if (user && (user.role === 'dev' || user.role === 'admin')) {
+                      await logAction(t.id, 'TICKET_VIEWED_FIRST_TIME', null, null);
+                    }
+                  }}
+                />
+              ) : view === 'analytics' ? (
+                <AnalyticsDashboard tickets={filteredTickets} />
+              ) : view === 'logs' ? (
+                <LogsView />
+              ) : (
+                <div style={{ padding: '2rem' }}>Página não encontrada.</div>
+              )}
+            </motion.div>
+          </AnimatePresence>
         </main>
+        <AppFooter />
       </div>
 
       <AnimatePresence>
@@ -657,8 +665,8 @@ function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, user
   }, []);
 
   return (
-    <div className="animate-in">
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2rem', gap: '1rem' }}>
+    <div className="user-dashboard-view">
+      <div className="dashboard-header" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.5rem', gap: '1rem', flexShrink: 0 }}>
         <div style={{ position: 'relative', flex: 1 }}>
           <Search size={18} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
           <input
@@ -674,12 +682,7 @@ function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, user
         </button>
       </div>
 
-      <div
-        style={{
-          display: 'grid',
-          gap: '1rem'
-        }}
-      >
+      <div className="tickets-list-container">
         {isLoading ? (
           <div className="glass" style={{ padding: '2rem', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
             <LoadingSpinner label="Sincronizando tickets..." />
@@ -705,7 +708,7 @@ function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, user
                   <h3 style={{ fontSize: '1.1rem', fontWeight: '600', marginBottom: '4px' }}>{ticket.title}</h3>
                   <div style={{ display: 'flex', gap: '12px' }}>
                     <div className="card-info-row">
-                      <LayoutDashboard size={12} /> {systems.find(p => p.id === ticket.platform)?.name || ticket.platform}
+                      <LayoutDashboard size={12} /> {systems.find(p => p.id == ticket.platform)?.name || ticket.platform}
                     </div>
                     <div className="card-info-row">
                       <Clock size={12} /> {new Date(ticket.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
@@ -722,12 +725,12 @@ function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, user
                   </div>
 
                   {user && user.role === 'admin' && (
-                    <button 
-                      className="btn-trash-mini" 
+                    <button
+                      className="btn-trash-mini"
                       onClick={(e) => {
                         e.stopPropagation();
                         onDelete(ticket.id);
-                      }} 
+                      }}
                       title="Excluir Ticket"
                     >
                       <Trash2 size={14} />
@@ -831,66 +834,66 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
           </div>
         ) : (
           DEV_STATUS.map(column => {
-          const columnTickets = visibleTickets.filter(t => t.status === column.id);
-          const isTarget = dropTarget === column.id;
+            const columnTickets = visibleTickets.filter(t => t.status === column.id);
+            const isTarget = dropTarget === column.id;
 
-          return (
-            <div
-              key={column.id}
-              className={`kanban-column ${isTarget ? 'drop-active' : ''}`}
-              onDragOver={(e) => handleDragOver(e, column.id)}
-              onDrop={(e) => handleDrop(e, column.id)}
-              style={{ minWidth: '300px', background: 'rgba(0,0,0,0.02)', borderRadius: '12px', padding: '1rem', display: 'flex', flexDirection: 'column' }}
-            >
-              <h3 style={{ fontSize: '0.85rem', fontWeight: '700', textTransform: 'uppercase', marginBottom: '1rem', display: 'flex', justifyContent: 'space-between' }}>
-                {column.name}
-                <span>{columnTickets.length}</span>
-              </h3>
+            return (
+              <div
+                key={column.id}
+                className={`kanban-column ${isTarget ? 'drop-active' : ''}`}
+                onDragOver={(e) => handleDragOver(e, column.id)}
+                onDrop={(e) => handleDrop(e, column.id)}
+                style={{ minWidth: '300px', background: 'rgba(0,0,0,0.02)', borderRadius: '12px', padding: '1rem', display: 'flex', flexDirection: 'column' }}
+              >
+                <h3 style={{ fontSize: '0.85rem', fontWeight: '700', textTransform: 'uppercase', marginBottom: '1rem', display: 'flex', justifyContent: 'space-between' }}>
+                  {column.name}
+                  <span>{columnTickets.length}</span>
+                </h3>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                {columnTickets.map(ticket => {
-                  const urgencyColor = URGENCY_LEVELS.find(u => u.id === ticket.urgency)?.color || 'transparent';
-                  const responsibleUser = allUsers.find(u => u.name === ticket.responsible);
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                  {columnTickets.map(ticket => {
+                    const urgencyColor = URGENCY_LEVELS.find(u => u.id === ticket.urgency)?.color || 'transparent';
+                    const responsibleUser = allUsers.find(u => u.name === ticket.responsible);
 
-                  return (
-                    <motion.div
-                      layout
-                      key={ticket.id}
-                      draggable
-                      onDragStart={(e) => handleDragStart(e, ticket)}
-                      onClick={() => onTicketClick(ticket)}
-                      className="glass kanban-card"
-                      style={{
-                        padding: '1rem',
-                        cursor: 'grab',
-                        borderLeft: `5px solid ${urgencyColor}`
-                      }}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', marginBottom: '4px' }}>
-                        <span style={{ color: 'var(--primary)', fontWeight: '700' }}>#{ticket.id}</span>
-                        <span style={{ color: 'var(--text-muted)', fontWeight: '600' }}>{systems.find(p => p.id === ticket.platform)?.name || ticket.platform}</span>
-                      </div>
-                      <h4 style={{ fontSize: '0.9rem', fontWeight: '600', marginBottom: '8px' }}>{ticket.title}</h4>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{new Date(ticket.created_at).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
-
-                        <div className="kanban-card-responsible">
-                          <div className="responsible-name">{ticket.responsible || 'Sem responsável'}</div>
-                          <img
-                            src={responsibleUser?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${ticket.responsible || 'guest'}`}
-                            className="responsible-avatar-mini"
-                            alt={ticket.responsible}
-                          />
+                    return (
+                      <motion.div
+                        layout
+                        key={ticket.id}
+                        draggable
+                        onDragStart={(e) => handleDragStart(e, ticket)}
+                        onClick={() => onTicketClick(ticket)}
+                        className="glass kanban-card"
+                        style={{
+                          padding: '1rem',
+                          cursor: 'grab',
+                          borderLeft: `5px solid ${urgencyColor}`
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', marginBottom: '4px' }}>
+                          <span style={{ color: 'var(--primary)', fontWeight: '700' }}>#{ticket.id}</span>
+                          <span style={{ color: 'var(--text-muted)', fontWeight: '600' }}>{systems.find(p => p.id == ticket.platform)?.name || ticket.platform}</span>
                         </div>
-                      </div>
-                    </motion.div>
-                  );
-                })}
+                        <h4 style={{ fontSize: '0.9rem', fontWeight: '600', marginBottom: '8px' }}>{ticket.title}</h4>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{new Date(ticket.created_at).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+
+                          <div className="kanban-card-responsible">
+                            <div className="responsible-name">{ticket.responsible || 'Sem responsável'}</div>
+                            <img
+                              src={responsibleUser?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${ticket.responsible || 'guest'}`}
+                              className="responsible-avatar-mini"
+                              alt={ticket.responsible}
+                            />
+                          </div>
+                        </div>
+                      </motion.div>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          );
-        })
-      )}
+            );
+          })
+        )}
       </div>
     </div>
   );
@@ -911,7 +914,7 @@ function TicketModal({ onClose, onSubmit, systems }) {
   const [previews, setPreviews] = useState([]);
 
   const handlePlatformChange = (pId) => {
-    const platform = systems.find(p => p.id === pId);
+    const platform = systems.find(p => p.id == pId);
     setFormData({
       ...formData,
       platform: pId,
@@ -989,7 +992,7 @@ function TicketModal({ onClose, onSubmit, systems }) {
               <label>Responsável</label>
               <select value={formData.responsible} onChange={e => setFormData({ ...formData, responsible: e.target.value })} disabled={!formData.platform}>
                 <option value="">Selecione...</option>
-                {formData.platform && systems.find(p => p.id === formData.platform)?.primary_responsibles?.map(r => (
+                {formData.platform && systems.find(p => p.id == formData.platform)?.primary_responsibles?.map(r => (
                   <option key={r} value={r}>{r}</option>
                 ))}
               </select>
@@ -1033,7 +1036,7 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, allUsers }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
-  const platform = systems.find(p => p.id === ticket.platform);
+  const platform = systems.find(p => p.id == ticket.platform);
   const availableDevs = platform?.primary_responsibles || [];
 
   const creator = allUsers.find(u => u.id === ticket.created_by);
@@ -1157,7 +1160,7 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, allUsers }) {
                       <img src={creator?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${creator?.name || 'ghost'}`} style={{ width: '32px', height: '32px', borderRadius: '50%' }} />
                       <div className="activity-content">
                         <div className="activity-user">{creator?.name || "Usuário"}</div>
-                        <div className="activity-text">criou este ticket para o sistema {systems.find(p => p.id === ticket.platform)?.name}</div>
+                        <div className="activity-text">criou este ticket para o sistema {systems.find(p => p.id == ticket.platform)?.name}</div>
                         <div className="activity-time">{new Date(ticket.created_at).toLocaleString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
                       </div>
                     </div>
@@ -1219,7 +1222,7 @@ function AnalyticsDashboard({ tickets }) {
 
   useEffect(() => {
     const fetchAllLogs = async () => {
-      const { data } = await supabase.from('system_logs').select('*');
+      const { data } = await api.from('system_logs').select('*');
       setLogs(data || []);
       setLoading(false);
     };
@@ -1321,12 +1324,10 @@ function UsersView({ user }) {
   useEffect(() => {
     setMounted(true);
     fetchUsers();
-    const ch = supabase.channel('u_p').on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'users' }, fetchUsers).subscribe();
-    return () => supabase.removeChannel(ch);
   }, []);
 
   const fetchUsers = async () => {
-    const { data } = await supabase.from('users').select('*').order('name');
+    const { data } = await api.from('users').select('*').order('name');
     setDbUsers(data || []);
     setLoading(false);
   };
@@ -1335,7 +1336,7 @@ function UsersView({ user }) {
     e.preventDefault();
     const fd = new FormData(e.target);
     const data = Object.fromEntries(fd);
-    const { error } = await supabase.from('users').insert([{ ...data, avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${data.email}` }]);
+    const { error } = await api.from('users').insert([{ ...data, avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${data.email}` }]);
     if (!error) { toast.success('Membro criado!'); setIsNewUserModalOpen(false); fetchUsers(); }
   };
 
@@ -1345,7 +1346,7 @@ function UsersView({ user }) {
       return;
     }
     if (window.confirm('Tem certeza que deseja remover este membro da equipe?')) {
-      const { error } = await supabase.from('users').delete().eq('id', uId);
+      const { error } = await api.from('users').delete().eq('id', uId);
       if (!error) { toast.success('Usuário removido'); fetchUsers(); }
       else { toast.error('Erro ao remover usuário.'); }
     }
@@ -1460,7 +1461,7 @@ function SystemsView({ user, systems, onUpdate }) {
   }, [activeModal]);
 
   const fetchUsers = async () => {
-    const { data } = await supabase.from('users').select('name, email').order('name');
+    const { data } = await api.from('users').select('name, email').order('name');
     setAllUsers(data || []);
   };
 
@@ -1470,15 +1471,14 @@ function SystemsView({ user, systems, onUpdate }) {
     const name = fd.get('name');
     try {
       if (activeModal === 'new_system') {
-        const { error } = await supabase.from('systems').insert([{
-          id: name.toLowerCase().replace(/\s/g, '_') + '_' + Date.now(),
+        const { error } = await api.from('systems').insert([{
           name,
           primary_responsibles: []
         }]);
         if (error) throw error;
         toast.success('Sistema criado!');
       } else {
-        const { error } = await supabase.from('systems').update({ name }).eq('id', editingSystem.id);
+        const { error } = await api.from('systems').update({ name }).eq('id', editingSystem.id);
         if (error) throw error;
         toast.success('Nome atualizado!');
       }
@@ -1499,7 +1499,7 @@ function SystemsView({ user, systems, onUpdate }) {
 
     try {
       // Usando upsert para criar o sistema caso ele seja apenas mockado (local)
-      const { data, error, status } = await supabase.from('systems')
+      const { data, error, status } = await api.from('systems')
         .upsert({
           id: editingSystem.id,
           name: editingSystem.name, // Mantendo o nome original
@@ -1522,13 +1522,13 @@ function SystemsView({ user, systems, onUpdate }) {
 
   const handleConfirmDelete = async () => {
     try {
-      const { error } = await supabase.from('systems').delete().eq('id', editingSystem.id);
+      const { error } = await api.from('systems').delete().eq('id', editingSystem.id);
       if (error) throw error;
       toast.success('Sistema excluído.');
       closeModal();
       onUpdate();
     } catch (err) {
-      toast.error('Erro ao excluir.');
+      toast.error('Erro ao excluir: ' + (err.message || err));
     }
   };
 
@@ -1717,7 +1717,7 @@ function LogsView() {
 
   useEffect(() => {
     const fetchLogsData = async () => {
-      const { data } = await supabase.from('system_logs').select('*').order('created_at', { ascending: false }).limit(200);
+      const { data } = await api.from('system_logs').select('*').order('created_at', { ascending: false }).limit(200);
       setLogs(data || []);
       setLoading(false);
     };
@@ -1844,4 +1844,3 @@ function LogsView() {
     </div>
   );
 }
-

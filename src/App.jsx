@@ -332,6 +332,13 @@ export default function App() {
   const [systemLogs, setSystemLogs] = useState([]);
   const [allUsers, setAllUsers] = useState([]);
 
+  const fetchUsersList = async () => {
+    try {
+      const { data: userData } = await api.from('users').select('*').order('name');
+      if (userData) setAllUsers(userData);
+    } catch(e) {}
+  };
+
   useEffect(() => {
     const initData = async () => {
       // Carregar Sistemas
@@ -342,10 +349,7 @@ export default function App() {
       } catch(e) { setSystemsList(PLATFORMS); }
 
       // Carregar Usuários
-      try {
-        const { data: userData } = await api.from('users').select('*').order('name');
-        if (userData) setAllUsers(userData);
-      } catch(e) {}
+      await fetchUsersList();
 
       await fetchTickets();
 
@@ -767,7 +771,7 @@ export default function App() {
                   systems={systemsList}
                 />
               ) : view === 'users' ? (
-                <UsersView user={user} onDeleteUser={handleDeleteUser} />
+                <UsersView user={user} onDeleteUser={handleDeleteUser} fetchUsers={fetchUsersList} />
               ) : view === 'systems' ? (
                 <SystemsView user={user} systems={systemsList} onUpdate={async () => {
                   const { data } = await api.from('systems').select('*');
@@ -1580,10 +1584,12 @@ function AnalyticsDashboard({ tickets }) {
 }
 
 // --- Views Administrativas ---
-function UsersView({ user }) {
+function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers }) {
   const [dbUsers, setDbUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isNewUserModalOpen, setIsNewUserModalOpen] = useState(false);
+  const [isEditUserModalOpen, setIsEditUserModalOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState(null);
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -1602,7 +1608,15 @@ function UsersView({ user }) {
     const fd = new FormData(e.target);
     const data = Object.fromEntries(fd);
     const { error } = await api.from('users').insert([{ ...data, avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${data.email}` }]);
-    if (!error) { toast.success('Membro criado!'); setIsNewUserModalOpen(false); fetchUsers(); }
+    if (!error) { toast.success('Membro criado!'); setIsNewUserModalOpen(false); fetchUsers(); playSound('success'); }
+  };
+
+  const handleUpdateUser = async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const data = Object.fromEntries(fd);
+    const { error } = await api.from('users').update(data).eq('id', editingUser.id);
+    if (!error) { toast.success('Dados atualizados!'); setIsEditUserModalOpen(false); fetchUsers(); playSound('success'); }
   };
 
   const handleDeleteUserInternal = (uId, uName) => {
@@ -1635,7 +1649,7 @@ function UsersView({ user }) {
                 <th style={{ padding: '1.25rem', fontSize: '0.75rem', fontWeight: '800', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Membro</th>
                 <th style={{ padding: '1.25rem', fontSize: '0.75rem', fontWeight: '800', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Cargo</th>
                 <th style={{ padding: '1.25rem', fontSize: '0.75rem', fontWeight: '800', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Status</th>
-                {user?.role === 'admin' && <th style={{ padding: '1.25rem' }}></th>}
+                {user?.role === 'admin' && <th style={{ padding: '1.25rem', textAlign: 'right' }}>Ação</th>}
               </tr>
             </thead>
             <tbody>
@@ -1671,9 +1685,14 @@ function UsersView({ user }) {
                   </td>
                   {user?.role === 'admin' && (
                     <td style={{ padding: '1.25rem', textAlign: 'right' }}>
-                      <button className="icon-btn logout" onClick={() => handleDeleteUserInternal(u.id, u.name)} title="Excluir Usuário">
-                        <Trash2 size={16} />
-                      </button>
+                      <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                        <button className="icon-btn" onClick={() => { setEditingUser(u); setIsEditUserModalOpen(true); playSound('click'); }} title="Editar Dados">
+                          <Pencil size={16} />
+                        </button>
+                        <button className="icon-btn logout" onClick={() => handleDeleteUserInternal(u.id, u.name)} title="Excluir Usuário">
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
                     </td>
                   )}
                 </tr>
@@ -1696,6 +1715,30 @@ function UsersView({ user }) {
                 <option value="admin">Admin</option>
               </select>
               <button type="submit" className="btn btn-primary" style={{ marginTop: '1rem' }}>Cadastrar</button>
+            </form>
+          </motion.div>
+        </div>,
+        document.body
+      )}
+      {mounted && isEditUserModalOpen && createPortal(
+        <div className="overlay" onClick={() => setIsEditUserModalOpen(false)}>
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="glass modal" style={{ width: '400px', padding: '2rem' }} onClick={e => e.stopPropagation()}>
+            <form onSubmit={handleUpdateUser} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                <h3 style={{ margin: 0 }}>Editar Membro</h3>
+                <button type="button" onClick={() => setIsEditUserModalOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={20} /></button>
+              </div>
+              <label style={{ fontSize: '0.75rem' }}>Nome Completo</label>
+              <input name="name" defaultValue={editingUser?.name} placeholder="Nome" required />
+              <label style={{ fontSize: '0.75rem' }}>E-mail de Acesso</label>
+              <input name="email" type="email" defaultValue={editingUser?.email} placeholder="E-mail" required />
+              <label style={{ fontSize: '0.75rem' }}>Cargo / Permissão</label>
+              <select name="role" defaultValue={editingUser?.role}>
+                <option value="user">User</option>
+                <option value="dev">Dev</option>
+                <option value="admin">Admin</option>
+              </select>
+              <button type="submit" className="btn btn-primary" style={{ marginTop: '1rem' }}>Salvar Alterações</button>
             </form>
           </motion.div>
         </div>,

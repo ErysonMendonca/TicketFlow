@@ -323,19 +323,6 @@ function AppHeader({ currentView, setView, user, theme, toggleTheme, onLogout })
                           {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
                           {theme === 'light' ? 'Modo Escuro' : 'Modo Claro'}
                         </button>
-
-                        <button className="menu-item" onClick={async () => {
-                          const newStatus = !user.is_online;
-                          const { error } = await api.from('users').update({ is_online: newStatus }).eq('id', user.id);
-                          if (!error) {
-                            setUser({ ...user, is_online: newStatus });
-                            toast.success(newStatus ? 'Você está Disponível' : 'Você está Ausente');
-                            playSound('success');
-                          }
-                        }}>
-                          <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: user.is_online ? '#10b981' : '#f59e0b', marginRight: '2px' }}></div>
-                          Status: {user.is_online ? 'Disponível' : 'Ausente'}
-                        </button>
                         
                         <div style={{ height: '1px', background: 'var(--glass-border)', margin: '4px 0' }} />
                         

@@ -221,6 +221,57 @@ body {
   background: rgba(255, 255, 255, 0.05);
 }
 
+/* --- Menu do Usuário (Glassmorphism Aprimorado) --- */
+.user-menu-dropdown {
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  background: var(--surface-glass); /* Usando variável de superfície ou fallback */
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.5);
+  border-radius: 16px !important;
+  overflow: hidden;
+}
+
+[data-theme='light'] .user-menu-dropdown {
+  background: rgba(255, 255, 255, 0.8) !important;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
+}
+
+[data-theme='dark'] .user-menu-dropdown {
+  background: rgba(30, 35, 45, 0.8) !important;
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 16px;
+  border: none !important;
+  background: transparent !important; /* Força transparência para evitar blocos brancos */
+  color: var(--text-main);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: left;
+}
+
+.menu-item:hover {
+  background: rgba(99, 102, 241, 0.1) !important;
+  color: var(--primary);
+  padding-left: 20px;
+}
+
+.logout-item {
+  color: #f87171; /* Vermelho mais suave */
+}
+
+.logout-item:hover {
+  background: rgba(248, 113, 113, 0.1) !important;
+  color: #ef4444;
+}
+
 .nav-btn {
   flex: 1;
   display: flex;

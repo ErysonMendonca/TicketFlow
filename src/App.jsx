@@ -696,8 +696,11 @@ export default function App() {
                   setSearch={setSearch}
                   onDelete={deleteTicket}
                   onTicketClick={async (t) => {
-                    const { data } = await api.from('tickets').select('attachments').eq('id', t.id).single();
-                    setViewingTicket({ ...t, attachments: data?.attachments || [] });
+                    // Apenas DEVs e ADMINs podem ver detalhes e anexos
+                    if (user?.role === 'dev' || user?.role === 'admin') {
+                      const { data } = await api.from('tickets').select('attachments').eq('id', t.id).single();
+                      setViewingTicket({ ...t, attachments: data?.attachments || [] });
+                    }
                   }}
                   user={user}
                   systems={systemsList}
@@ -809,7 +812,13 @@ function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, onTi
               layout
               key={ticket.id}
               className="glass ticket-card"
-              style={{ padding: '1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}
+              style={{ 
+                padding: '1.25rem', 
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'space-between', 
+                cursor: (user?.role === 'admin' || user?.role === 'dev') ? 'pointer' : 'default' 
+              }}
               onClick={() => onTicketClick(ticket)}
             >
               <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'center' }}>

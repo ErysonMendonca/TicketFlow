@@ -495,19 +495,16 @@ export default function App() {
 
     window.addEventListener('click', handleGlobalClick);
 
-    // Assinar mudanças de status em tempo real (Supabase Realtime)
-    const usersSubscription = api
-      .channel('public:users')
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'users' }, (payload) => {
-        setAllUsers(prev => prev.map(u => u.id === payload.new.id ? { ...u, ...payload.new } : u));
-      })
-      .subscribe();
+    // Polling de usuários para simular Tempo Real (Necessário para API MySQL local)
+    const usersPolling = setInterval(() => {
+      fetchUsersList();
+    }, 10000); // Atualiza a cada 10 segundos
 
     return () => {
       window.removeEventListener('error', handleGlobalError);
-      window.removeEventListener('click', handleGlobalError);
+      window.removeEventListener('click', handleGlobalClick);
       clearInterval(heartbeat);
-      usersSubscription.unsubscribe();
+      clearInterval(usersPolling);
       socket.off('new_ticket_alert');
       socket.off('ticket_status_refreshed');
     };

@@ -440,6 +440,9 @@ export default function App() {
       }
     }, 60000); // 1 minuto
 
+    // Disparo imediato na inicialização
+    if (user) updatePresence(user.is_online);
+
     window.addEventListener('error', handleGlobalError);
     window.addEventListener('beforeunload', () => updatePresence(false));
     
@@ -492,10 +495,19 @@ export default function App() {
 
     window.addEventListener('click', handleGlobalClick);
 
+    // Assinar mudanças de status em tempo real (Supabase Realtime)
+    const usersSubscription = api
+      .channel('public:users')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'users' }, (payload) => {
+        setAllUsers(prev => prev.map(u => u.id === payload.new.id ? { ...u, ...payload.new } : u));
+      })
+      .subscribe();
+
     return () => {
       window.removeEventListener('error', handleGlobalError);
-      window.removeEventListener('click', handleGlobalError); // Corrigido para removeListener correto se necessário
+      window.removeEventListener('click', handleGlobalError);
       clearInterval(heartbeat);
+      usersSubscription.unsubscribe();
       socket.off('new_ticket_alert');
       socket.off('ticket_status_refreshed');
     };
@@ -1755,7 +1767,17 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers }) {
                         }}>
                           {getInitials(u.name)}
                         </div>
-                        {u.is_online && <span style={{ position: 'absolute', bottom: '-2px', right: '-2px', width: '12px', height: '12px', background: '#10b981', borderRadius: '50%', border: '2px solid var(--surface)' }}></span>}
+                        <span style={{ 
+                          position: 'absolute', 
+                          bottom: '-2px', 
+                          right: '-2px', 
+                          width: '14px', 
+                          height: '14px', 
+                          background: u.is_online ? '#10b981' : '#ef4444', 
+                          borderRadius: '50%', 
+                          border: '2px solid var(--surface)',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
+                        }} title={u.is_online ? 'Disponível' : 'Offline'}></span>
                       </div>
                       <div>
                         <div style={{ fontWeight: '700', fontSize: '0.95rem' }}>{u.name}</div>

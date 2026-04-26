@@ -63,10 +63,11 @@ const playSound = (type) => {
   const sounds = {
     success: 'https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3',
     error: 'https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3',
-    notification: 'https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3'
+    notification: 'https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3',
+    click: 'https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3'
   };
   const audio = new Audio(sounds[type]);
-  audio.volume = 0.4;
+  audio.volume = type === 'click' ? 0.2 : 0.4; // Som de clique mais baixo para não cansar
   audio.play().catch(() => {}); // Ignora erro se o navegador bloquear autoplay
 };
 
@@ -379,8 +380,19 @@ export default function App() {
       fetchTickets();
     });
 
+    // Feedback sonoro global para cliques
+    const handleGlobalClick = (e) => {
+      const target = e.target.closest('button, a, select, .kanban-card, .ticket-card, .sidebar-item, input[type="submit"]');
+      if (target) {
+        playSound('click');
+      }
+    };
+
+    window.addEventListener('click', handleGlobalClick);
+
     return () => {
       window.removeEventListener('error', handleGlobalError);
+      window.removeEventListener('click', handleGlobalClick);
       socket.off('new_ticket_alert');
       socket.off('ticket_status_refreshed');
     };
@@ -1176,8 +1188,19 @@ function TicketModal({ onClose, onSubmit, systems }) {
             </div>
           )}
 
-          <button type="submit" className="btn btn-primary" style={{ width: '100%', opacity: isSubmitting ? 0.7 : 1 }} disabled={isSubmitting}>
-            {isSubmitting ? <LoadingSpinner label="Enviando..." /> : 'Criar Ticket'}
+          <button type="submit" className="btn btn-primary" style={{ width: '100%', height: '48px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', opacity: isSubmitting ? 0.7 : 1 }} disabled={isSubmitting}>
+            {isSubmitting ? (
+              <>
+                <motion.div
+                  animate={{ rotate: 360 }}
+                  transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}
+                  style={{ display: 'flex' }}
+                >
+                  <RefreshCw size={18} />
+                </motion.div>
+                <span>Enviando...</span>
+              </>
+            ) : 'Criar Ticket'}
           </button>
         </form>
       </motion.div>

@@ -323,6 +323,19 @@ function AppHeader({ currentView, setView, user, theme, toggleTheme, onLogout })
                           {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
                           {theme === 'light' ? 'Modo Escuro' : 'Modo Claro'}
                         </button>
+
+                        <button className="menu-item" onClick={async () => {
+                          const newStatus = !user.is_online;
+                          const { error } = await api.from('users').update({ is_online: newStatus }).eq('id', user.id);
+                          if (!error) {
+                            setUser({ ...user, is_online: newStatus });
+                            toast.success(newStatus ? 'Você está Disponível' : 'Você está Ausente');
+                            playSound('success');
+                          }
+                        }}>
+                          <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: user.is_online ? '#10b981' : '#f59e0b', marginRight: '2px' }}></div>
+                          Status: {user.is_online ? 'Disponível' : 'Ausente'}
+                        </button>
                         
                         <div style={{ height: '1px', background: 'var(--glass-border)', margin: '4px 0' }} />
                         
@@ -427,7 +440,17 @@ export default function App() {
       logAction(null, 'CLIENT_ERROR', 'Runtime Error', `${errorMsg} | Stack: ${stack?.substring(0, 150)}...`);
     };
 
+    const updatePresence = async (status) => {
+      if (!user) return;
+      await api.from('users').update({ is_online: status }).eq('id', user.id);
+    };
+
+    const heartbeat = setInterval(() => {
+      if (user) updatePresence(true);
+    }, 60000); // 1 minuto
+
     window.addEventListener('error', handleGlobalError);
+    window.addEventListener('beforeunload', () => updatePresence(false));
     
     // Ouvir novos tickets em tempo real
     socket.on('new_ticket_alert', (newTicket) => {
@@ -480,7 +503,8 @@ export default function App() {
 
     return () => {
       window.removeEventListener('error', handleGlobalError);
-      window.removeEventListener('click', handleGlobalClick);
+      window.removeEventListener('click', handleGlobalError); // Corrigido para removeListener correto se necessário
+      clearInterval(heartbeat);
       socket.off('new_ticket_alert');
       socket.off('ticket_status_refreshed');
     };

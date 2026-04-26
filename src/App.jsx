@@ -520,7 +520,8 @@ export default function App() {
       return data[0];
     };
 
-    toast.promise(uploadAndInsert(), {
+    // Retornamos a promessa para que o modal possa controlar o estado de 'loading'
+    return toast.promise(uploadAndInsert(), {
       loading: 'Criando ticket...',
       success: (newTicket) => {
         setTickets([newTicket, ...tickets]);

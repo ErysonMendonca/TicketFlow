@@ -442,11 +442,15 @@ export default function App() {
 
     const updatePresence = async (status) => {
       if (!user) return;
+      // Atualiza o banco silenciosamente
       await api.from('users').update({ is_online: status }).eq('id', user.id);
     };
 
     const heartbeat = setInterval(() => {
-      if (user) updatePresence(true);
+      if (user) {
+        console.log(`[Presence] Heartbeat: ${user.name} is ${user.is_online ? 'Online' : 'Away'}`);
+        updatePresence(user.is_online);
+      }
     }, 60000); // 1 minuto
 
     window.addEventListener('error', handleGlobalError);

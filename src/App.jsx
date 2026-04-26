@@ -862,7 +862,7 @@ export default function App() {
                   systems={systemsList}
                 />
               ) : view === 'users' ? (
-                <UsersView user={user} onDeleteUser={handleDeleteUser} fetchUsers={fetchUsersList} />
+                <UsersView user={user} onDeleteUser={handleDeleteUser} fetchUsers={fetchUsersList} allUsers={allUsers} />
               ) : view === 'systems' ? (
                 <SystemsView user={user} systems={systemsList} onUpdate={async () => {
                   const { data } = await api.from('systems').select('*');
@@ -1684,9 +1684,9 @@ function AnalyticsDashboard({ tickets }) {
 }
 
 // --- Views Administrativas ---
-function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers }) {
-  const [dbUsers, setDbUsers] = useState([]);
-  const [loading, setLoading] = useState(true);
+function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers }) {
+  const dbUsers = allUsers || [];
+  const [loading, setLoading] = useState(false);
   const [isNewUserModalOpen, setIsNewUserModalOpen] = useState(false);
   const [isEditUserModalOpen, setIsEditUserModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
@@ -1694,21 +1694,20 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers }) {
 
   useEffect(() => {
     setMounted(true);
-    fetchUsers();
   }, []);
 
   const fetchUsers = async () => {
-    const { data } = await api.from('users').select('*').order('name');
-    setDbUsers(data || []);
-    setLoading(false);
-  };
-
   const handleCreateUser = async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
     const data = Object.fromEntries(fd);
     const { error } = await api.from('users').insert([{ ...data, avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${data.email}` }]);
-    if (!error) { toast.success('Membro criado!'); setIsNewUserModalOpen(false); fetchUsers(); playSound('success'); }
+    if (!error) { 
+      toast.success('Membro criado!'); 
+      setIsNewUserModalOpen(false); 
+      parentFetchUsers(); 
+      playSound('success'); 
+    }
   };
 
   const handleUpdateUser = async (e) => {
@@ -1716,7 +1715,12 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers }) {
     const fd = new FormData(e.target);
     const data = Object.fromEntries(fd);
     const { error } = await api.from('users').update(data).eq('id', editingUser.id);
-    if (!error) { toast.success('Dados atualizados!'); setIsEditUserModalOpen(false); fetchUsers(); playSound('success'); }
+    if (!error) { 
+      toast.success('Dados atualizados!'); 
+      setIsEditUserModalOpen(false); 
+      parentFetchUsers(); 
+      playSound('success'); 
+    }
   };
 
   const handleDeleteUserInternal = (uId, uName) => {

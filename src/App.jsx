@@ -1696,7 +1696,6 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers 
     setMounted(true);
   }, []);
 
-  const fetchUsers = async () => {
   const handleCreateUser = async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);

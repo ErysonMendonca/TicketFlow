@@ -51,9 +51,10 @@ import toast, { Toaster } from 'react-hot-toast';
 import { PLATFORMS, DEV_STATUS, URGENCY_LEVELS, OTHER_STATUS, MOCK_USERS } from './constants';
 import { io } from 'socket.io-client';
 
-// Configuração do WebSocket (Ajustar para o IP da sua VPS em produção)
-const SOCKET_URL = window.location.hostname === 'localhost' ? 'http://localhost:3001' : `http://${window.location.hostname}:3001`;
-const socket = io(SOCKET_URL);
+// Configuração do WebSocket (Conecta no mesmo domínio via Proxy do Nginx)
+const socket = io({
+  path: '/socket.io/'
+});
 
 // --- Utilitários ---
 const getStorageTickets = () => {

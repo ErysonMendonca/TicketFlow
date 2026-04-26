@@ -1038,6 +1038,17 @@ function TicketModal({ onClose, onSubmit, systems }) {
 
   const handleFileChange = (e) => {
     const selectedFiles = Array.from(e.target.files);
+    
+    // Limite de 20MB por arquivo para evitar erro 413 do Nginx/Server
+    const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
+    const oversizedFile = selectedFiles.find(f => f.size > MAX_FILE_SIZE);
+    
+    if (oversizedFile) {
+      toast.error(`O arquivo "${oversizedFile.name}" é muito grande! O limite é 20MB.`);
+      e.target.value = ''; // Reseta o input
+      return;
+    }
+
     const newPreviews = selectedFiles.map(file => ({
       file,
       url: URL.createObjectURL(file),

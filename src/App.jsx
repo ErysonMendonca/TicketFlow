@@ -64,10 +64,12 @@ const playSound = (type) => {
     success: 'https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3',
     error: 'https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3',
     notification: 'https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3',
-    click: 'https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3'
+    click: 'https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3',
+    open: 'https://assets.mixkit.co/active_storage/sfx/2572/2572-preview.mp3',
+    close: 'https://assets.mixkit.co/active_storage/sfx/2567/2567-preview.mp3'
   };
   const audio = new Audio(sounds[type]);
-  audio.volume = type === 'click' ? 0.2 : 0.4; // Som de clique mais baixo para não cansar
+  audio.volume = (type === 'click' || type === 'close') ? 0.2 : 0.4;
   audio.play().catch(() => {}); // Ignora erro se o navegador bloquear autoplay
 };
 
@@ -376,6 +378,24 @@ export default function App() {
       }
     });
 
+    socket.on('new_mention_alert', (data) => {
+      // Toca o som de notificação para todos os Devs/Admins
+      if (user?.role === 'admin' || user?.role === 'dev') {
+        playSound('notification');
+        toast(`📍 @${data.mentioned} foi mencionado no Ticket #${data.ticketId}!`, {
+          duration: 10000,
+          position: 'top-center',
+          icon: '🏷️',
+          style: { 
+            background: '#4f46e5', 
+            color: 'white', 
+            border: '2px solid rgba(255,255,255,0.2)',
+            fontWeight: '800'
+          }
+        });
+      }
+    });
+
     socket.on('ticket_status_refreshed', () => {
       fetchTickets();
     });
@@ -667,7 +687,12 @@ export default function App() {
   };
 
   const visibleTickets = (user?.role === 'dev')
-    ? tickets.filter(t => t.responsible === user.name)
+    ? tickets.filter(t => 
+        t.responsible === user.name || 
+        t.description?.includes(`@${user.name}`) || 
+        t.title?.includes(`@${user.name}`) ||
+        t.dev_notes?.includes(`@${user.name}`)
+      )
     : tickets;
 
   const filteredTickets = visibleTickets.filter(t =>
@@ -702,7 +727,10 @@ export default function App() {
 
       <AppHeader
         currentView={view}
-        setView={setView}
+        setView={(v) => {
+          playSound('open');
+          setView(v);
+        }}
         user={user}
         theme={theme}
         toggleTheme={toggleTheme}
@@ -760,6 +788,7 @@ export default function App() {
                     const fullTicket = { ...t, attachments: data?.attachments || [] };
                     
                     setViewingTicket(fullTicket);
+                    playSound('open');
                     if (user && (user.role === 'dev' || user.role === 'admin')) {
                       await logAction(t.id, 'TICKET_VIEWED_FIRST_TIME', null, null);
                     }
@@ -781,7 +810,10 @@ export default function App() {
       <AnimatePresence>
         {isModalOpen && (
           <TicketModal
-            onClose={() => setIsModalOpen(false)}
+            onClose={() => {
+              playSound('close');
+              setIsModalOpen(false);
+            }}
             onSubmit={addTicket}
             systems={systemsList}
           />
@@ -789,7 +821,10 @@ export default function App() {
         {viewingTicket && (
           <TicketDetailsModal
             ticket={viewingTicket}
-            onClose={() => setViewingTicket(null)}
+            onClose={() => {
+              playSound('close');
+              setViewingTicket(null);
+            }}
             onUpdate={updateTicketDetails}
             systems={systemsList}
             allUsers={allUsers}
@@ -825,7 +860,10 @@ function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, onTi
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        <button className="btn btn-primary" onClick={onOpenModal}>
+        <button className="btn btn-primary" onClick={() => {
+          playSound('open');
+          onOpenModal();
+        }}>
           <Plus size={18} /> Novo Ticket
         </button>
       </div>
@@ -1212,6 +1250,7 @@ function TicketModal({ onClose, onSubmit, systems }) {
 function TicketDetailsModal({ ticket, onClose, onUpdate, systems, allUsers }) {
   const [urgency, setUrgency] = useState(ticket.urgency || '');
   const [responsible, setResponsible] = useState(ticket.responsible || '');
+  const [isCustomResp, setIsCustomResp] = useState(false);
   const [devNotes, setDevNotes] = useState(ticket.dev_notes || '');
   const [viewingMedia, setViewingMedia] = useState(null);
   const [mounted, setMounted] = useState(false);

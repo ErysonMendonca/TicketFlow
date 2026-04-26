@@ -26,6 +26,12 @@ io.on("connection", (socket) => {
     socket.broadcast.emit("ticket_status_refreshed", data);
   });
 
+  // Notificar menção específica (@alguem)
+  socket.on('mention_created', (data) => {
+      console.log(`>>> Menção detectada: @${data.mentioned} no Ticket #${data.ticketId}`);
+      io.emit('new_mention_alert', data);
+  });
+
   socket.on("disconnect", () => {
     console.log("LOG: Usuário desconectado.");
   });

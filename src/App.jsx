@@ -53,7 +53,9 @@ import { io } from 'socket.io-client';
 
 // Configuração do WebSocket (Conecta no mesmo domínio via Proxy do Nginx)
 const socket = io({
-  path: '/socket.io/'
+  path: '/socket.io/',
+  transports: ['polling', 'websocket'],
+  upgrade: true
 });
 
 // --- Utilitários ---
@@ -427,7 +429,7 @@ export default function App() {
       setLoading(true);
       const { data, error } = await api
         .from('tickets')
-        .select('*')
+        .select('id, title, description, platform, status, urgency, responsible, created_by, created_at, updated_at, dev_notes')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -693,6 +695,10 @@ export default function App() {
                   search={search}
                   setSearch={setSearch}
                   onDelete={deleteTicket}
+                  onTicketClick={async (t) => {
+                    const { data } = await api.from('tickets').select('attachments').eq('id', t.id).single();
+                    setViewingTicket({ ...t, attachments: data?.attachments || [] });
+                  }}
                   user={user}
                   systems={systemsList}
                 />
@@ -713,7 +719,11 @@ export default function App() {
                   allUsers={allUsers}
                   systems={systemsList}
                   onTicketClick={async (t) => {
-                    setViewingTicket(t);
+                    // Busca os anexos pesados apenas sob demanda
+                    const { data } = await api.from('tickets').select('attachments').eq('id', t.id).single();
+                    const fullTicket = { ...t, attachments: data?.attachments || [] };
+                    
+                    setViewingTicket(fullTicket);
                     if (user && (user.role === 'dev' || user.role === 'admin')) {
                       await logAction(t.id, 'TICKET_VIEWED_FIRST_TIME', null, null);
                     }
@@ -757,7 +767,7 @@ export default function App() {
 }
 
 // --- Dashboard do Usuário ---
-function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, user, systems, isLoading }) {
+function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, onTicketClick, user, systems, isLoading }) {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
   useEffect(() => {
@@ -799,7 +809,8 @@ function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, user
               layout
               key={ticket.id}
               className="glass ticket-card"
-              style={{ padding: '1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+              style={{ padding: '1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}
+              onClick={() => onTicketClick(ticket)}
             >
               <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'center' }}>
                 <div style={{ textAlign: 'center' }}>
@@ -1014,6 +1025,7 @@ function TicketModal({ onClose, onSubmit, systems }) {
     files: []
   });
   const [previews, setPreviews] = useState([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handlePlatformChange = (pId) => {
     const platform = systems.find(p => p.id == pId);
@@ -1051,7 +1063,8 @@ function TicketModal({ onClose, onSubmit, systems }) {
       toast.error('Preencha os campos obrigatórios.');
       return;
     }
-    onSubmit(formData);
+    setIsSubmitting(true);
+    onSubmit(formData).finally(() => setIsSubmitting(false));
   };
 
   if (!mounted) return null;
@@ -1103,9 +1116,9 @@ function TicketModal({ onClose, onSubmit, systems }) {
 
           <div className="form-group">
             <label>Anexos</label>
-            <input type="file" id="file-upload" className="hidden" multiple accept="image/*,video/*" onChange={handleFileChange} />
-            <label htmlFor="file-upload" className="btn btn-ghost" style={{ width: '100%', justifyContent: 'center', cursor: 'pointer', borderStyle: 'dashed' }}>
-              <Plus size={18} /> Adicionar Mídia
+            <input type="file" id="file-upload" className="hidden" multiple accept="image/*,video/*" onChange={handleFileChange} disabled={isSubmitting} />
+            <label htmlFor="file-upload" className={`btn btn-ghost ${isSubmitting ? 'disabled' : ''}`} style={{ width: '100%', justifyContent: 'center', cursor: isSubmitting ? 'not-allowed' : 'pointer', borderStyle: 'dashed', opacity: isSubmitting ? 0.6 : 1 }}>
+              <Plus size={18} /> {isSubmitting ? 'Processando arquivos...' : 'Adicionar Mídia'}
             </label>
           </div>
 
@@ -1122,7 +1135,9 @@ function TicketModal({ onClose, onSubmit, systems }) {
             </div>
           )}
 
-          <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>Criar Ticket</button>
+          <button type="submit" className="btn btn-primary" style={{ width: '100%', opacity: isSubmitting ? 0.7 : 1 }} disabled={isSubmitting}>
+            {isSubmitting ? <LoadingSpinner label="Enviando..." /> : 'Criar Ticket'}
+          </button>
         </form>
       </motion.div>
     </div>,

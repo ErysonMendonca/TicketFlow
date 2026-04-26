@@ -96,7 +96,8 @@ export async function POST(request) {
     const connection = await pool.getConnection();
     try {
       // Aumentar sort_buffer_size para a sessão atual para evitar erro de ordenação em campos grandes (JSON)
-      await connection.query('SET SESSION sort_buffer_size = 8388608'); // 8MB
+      // Aumenta o buffer de ordenação para lidar com colunas JSON/Base64 pesadas
+      await connection.query('SET SESSION sort_buffer_size = 33554432'); // 32MB
       
       const [rows] = await connection.query(query, values);
 

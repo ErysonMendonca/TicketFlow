@@ -58,6 +58,18 @@ const socket = io({
   upgrade: true
 });
 
+// --- Utilitários de Áudio (Premium) ---
+const playSound = (type) => {
+  const sounds = {
+    success: 'https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3',
+    error: 'https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3',
+    notification: 'https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3'
+  };
+  const audio = new Audio(sounds[type]);
+  audio.volume = 0.4;
+  audio.play().catch(() => {}); // Ignora erro se o navegador bloquear autoplay
+};
+
 // --- Utilitários ---
 const getStorageTickets = () => {
   const saved = localStorage.getItem('tickets');
@@ -350,6 +362,7 @@ export default function App() {
     socket.on('new_ticket_alert', (newTicket) => {
       // Se for admin ou o dev responsável (ou livre), notifica
       if (user?.role === 'admin' || user?.role === 'dev') {
+        playSound('notification');
         toast.success(`🔔 Novo Ticket: #${newTicket.id} - ${newTicket.title}`, {
           duration: 8000,
           position: 'top-right',
@@ -434,7 +447,9 @@ export default function App() {
 
       if (error) throw error;
       setTickets(data || []);
+      if (data?.length > 0) playSound('success');
     } catch (err) {
+      playSound('error');
       toast.error('Erro ao buscar tickets');
     } finally {
       setLoading(false);
@@ -528,9 +543,13 @@ export default function App() {
         setIsModalOpen(false);
         // Notificar via WebSocket
         socket.emit('ticket_created', newTicket);
+        playSound('success');
         return `Ticket #${newTicket.id} criado!`;
       },
-      error: (err) => `Erro: ${err.message}`
+      error: (err) => {
+        playSound('error');
+        return `Erro: ${err.message}`;
+      }
     });
   };
 
@@ -583,6 +602,7 @@ export default function App() {
 
       if (error) throw error;
       toast.success('Status atualizado');
+      playSound('success');
       
       // Notificar outros sobre a mudança de status
       socket.emit('status_updated', { id: ticketId, status: newStatus });

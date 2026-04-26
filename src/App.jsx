@@ -66,7 +66,7 @@ const playSound = (type) => {
     notification: 'https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3',
     click: 'https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3',
     open: 'https://assets.mixkit.co/active_storage/sfx/2572/2572-preview.mp3',
-    close: 'https://assets.mixkit.co/active_storage/sfx/2567/2567-preview.mp3'
+    close: 'https://assets.mixkit.co/active_storage/sfx/2572/2572-preview.mp3'
   };
   const audio = new Audio(sounds[type]);
   audio.volume = (type === 'click' || type === 'close') ? 0.2 : 0.4;
@@ -1252,6 +1252,8 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, allUsers }) {
   const [responsible, setResponsible] = useState(ticket.responsible || '');
   const [isCustomResp, setIsCustomResp] = useState(false);
   const [devNotes, setDevNotes] = useState(ticket.dev_notes || '');
+  const [mentionQuery, setMentionQuery] = useState('');
+  const [showMentionList, setShowMentionList] = useState(false);
   const [viewingMedia, setViewingMedia] = useState(null);
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -1364,11 +1366,54 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, allUsers }) {
                       {URGENCY_LEVELS.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
                     </select>
                   </div>
-                  <div className="form-group">
+                  <div className="form-group" style={{ position: 'relative' }}>
                     <label style={{ fontSize: '0.75rem' }}>Notas Técnicas</label>
-                    <textarea value={devNotes} onChange={e => setDevNotes(e.target.value)} placeholder="Logs técnicos..." style={{ minHeight: '120px', fontSize: '0.85rem', padding: '10px' }}></textarea>
+                    <textarea 
+                      value={devNotes} 
+                      onChange={e => {
+                        const val = e.target.value;
+                        setDevNotes(val);
+                        const lastWord = val.split(/\s/).pop();
+                        if (lastWord.startsWith('@')) {
+                          setMentionQuery(lastWord.slice(1));
+                          setShowMentionList(true);
+                        } else {
+                          setShowMentionList(false);
+                        }
+                      }} 
+                      placeholder="Logs técnicos (use @ para mencionar)..." 
+                      style={{ minHeight: '120px', fontSize: '0.85rem', padding: '10px' }}
+                    ></textarea>
+
+                    {showMentionList && (
+                      <div className="mention-dropdown glass">
+                        {allUsers.filter(u => u.name.toLowerCase().includes(mentionQuery.toLowerCase())).map(u => (
+                          <div key={u.id} className="mention-item" onClick={() => {
+                            const words = devNotes.split(/\s/);
+                            words.pop();
+                            setDevNotes(words.join(' ') + (words.length > 0 ? ' ' : '') + `@${u.name} `);
+                            setShowMentionList(false);
+                            playSound('click');
+                          }}>
+                            <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${u.name}`} style={{ width: '20px', height: '20px', borderRadius: '50%' }} />
+                            <span>{u.name}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                  <button className="btn btn-primary" style={{ width: '100%', marginTop: '0.5rem' }} onClick={() => onUpdate(ticket.id, { responsible, urgency, dev_notes: devNotes })}>Salvar Alterações</button>
+                  <button className="btn btn-primary" style={{ width: '100%', marginTop: '0.5rem' }} onClick={() => {
+                    const mentions = devNotes.match(/@(\w+)/g);
+                    if (mentions) {
+                      mentions.forEach(m => {
+                        const name = m.replace('@', '');
+                        socket.emit('mention_created', { ticketId: ticket.id, mentioned: name, by: user.name });
+                      });
+                    }
+                    onUpdate(ticket.id, { responsible, urgency, dev_notes: devNotes });
+                    playSound('success');
+                    onClose();
+                  }}>Salvar Alterações</button>
                 </div>
 
                 <div style={{ marginTop: 'auto' }}>
@@ -2114,4 +2159,42 @@ function ConfirmationModal({ config, onClose }) {
     </div>,
     document.body
   );
+}
+
+/* --- Estilos de Menção --- */
+.mention-dropdown {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  width: 100%;
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 1000;
+  border-radius: 12px;
+  margin-bottom: 8px;
+  padding: 8px;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+  background: var(--surface);
+  border: 1px solid var(--glass-border);
+}
+
+.mention-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: var(--text-main);
+}
+
+.mention-item:hover {
+  background: rgba(255, 255, 255, 0.1);
+  transform: translateX(4px);
+}
+
+.mention-item span {
+  font-weight: 600;
+  font-size: 0.85rem;
 }

@@ -74,6 +74,15 @@ const playSound = (type) => {
 };
 
 // --- Utilitários ---
+const getInitials = (name) => {
+  if (!name) return '??';
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+  return parts[0][0].toUpperCase();
+};
+
 const getStorageTickets = () => {
   const saved = localStorage.getItem('tickets');
   return saved ? JSON.parse(saved) : [];
@@ -230,6 +239,8 @@ function LoginScreen({ onLogin, theme }) {
 // --- Componente Principal ---
 // --- App Header Horizontal ---
 function AppHeader({ currentView, setView, user, theme, toggleTheme, onLogout }) {
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  
   const menus = [
     { id: 'tickets', name: 'Tickets', icon: <UserIcon size={18} />, roles: ['user', 'admin'] },
     { id: 'users', name: 'Usuários', icon: <Users size={18} />, roles: ['admin'] },
@@ -252,24 +263,76 @@ function AppHeader({ currentView, setView, user, theme, toggleTheme, onLogout })
             alt="TynkeTech" 
           />
           
-          <div className="brand-actions-group">
-            <button className="icon-btn-compact theme-toggle" onClick={toggleTheme} title="Alternar Tema">
-              {theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
-            </button>
-
+          <div className="brand-actions-group" style={{ position: 'relative' }}>
             {user && (
               <>
-                <div className="user-avatar-wrapper">
-                  <img 
-                    src={user.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.email}`} 
-                    className="user-avatar-mini" 
-                    alt={user.name} 
-                  />
+                <div 
+                  className="user-avatar-wrapper initials-avatar" 
+                  onClick={() => setIsMenuOpen(!isMenuOpen)} 
+                  title="Menu do Usuário"
+                  style={{ 
+                    cursor: 'pointer', 
+                    background: 'var(--primary)', 
+                    color: 'white', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'center', 
+                    fontWeight: '800', 
+                    fontSize: '0.9rem',
+                    width: '40px',
+                    height: '40px',
+                    borderRadius: '12px',
+                    border: isMenuOpen ? '2px solid white' : '2px solid transparent',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  {getInitials(user.name)}
                 </div>
 
-                <button className="icon-btn-compact logout" onClick={onLogout} title="Sair">
-                  <LogOut size={16} />
-                </button>
+                <AnimatePresence>
+                  {isMenuOpen && (
+                    <>
+                      <div style={{ position: 'fixed', inset: 0, zIndex: 998 }} onClick={() => setIsMenuOpen(false)} />
+                      <motion.div 
+                        initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                        className="user-menu-dropdown glass"
+                        style={{
+                          position: 'absolute',
+                          top: '50px',
+                          right: '0',
+                          width: '220px',
+                          zIndex: 999,
+                          padding: '8px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '4px'
+                        }}
+                      >
+                        <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--glass-border)', marginBottom: '4px' }}>
+                          <div style={{ fontSize: '0.85rem', fontWeight: '700' }}>{user.name}</div>
+                          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>{user.role}</div>
+                        </div>
+                        
+                        <button className="menu-item" onClick={() => { setView('profile'); setIsMenuOpen(false); }}>
+                          <UserCircle size={18} /> Meu Perfil
+                        </button>
+                        
+                        <button className="menu-item" onClick={() => { toggleTheme(); playSound('click'); }}>
+                          {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
+                          {theme === 'light' ? 'Modo Escuro' : 'Modo Claro'}
+                        </button>
+                        
+                        <div style={{ height: '1px', background: 'var(--glass-border)', margin: '4px 0' }} />
+                        
+                        <button className="menu-item logout-item" onClick={onLogout}>
+                          <LogOut size={18} /> Sair
+                        </button>
+                      </motion.div>
+                    </>
+                  )}
+                </AnimatePresence>
               </>
             )}
           </div>
@@ -319,6 +382,7 @@ export default function App() {
   const [search, setSearch] = useState('');
   const [hash, setHash] = useState(window.location.hash);
   const [viewingTicket, setViewingTicket] = useState(null);
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
 
   const [confirmConfig, setConfirmConfig] = useState({ isOpen: false, title: '', message: '', onConfirm: null });
 
@@ -802,6 +866,8 @@ export default function App() {
                 <AnalyticsDashboard tickets={filteredTickets} />
               ) : view === 'logs' ? (
                 <LogsView />
+              ) : view === 'profile' ? (
+                <ProfileView user={user} onUpdate={(updated) => { setUser(updated); localStorage.setItem('currentUser', JSON.stringify(updated)); setView('tickets'); }} />
               ) : (
                 <div style={{ padding: '2rem' }}>Página não encontrada.</div>
               )}
@@ -1426,7 +1492,14 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, allUsers }) {
                   </div>
                   <div className="activity-feed">
                     <div className="activity-item">
-                      <img src={creator?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${creator?.name || 'ghost'}`} style={{ width: '32px', height: '32px', borderRadius: '50%' }} />
+                      <div style={{ 
+                        width: '32px', height: '32px', borderRadius: '50%', 
+                        background: creator?.role === 'admin' ? 'var(--primary)' : 'var(--success)',
+                        color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: '0.75rem', fontWeight: '800'
+                      }}>
+                        {getInitials(creator?.name)}
+                      </div>
                       <div className="activity-content">
                         <div className="activity-user">{creator?.name || "Usuário"}</div>
                         <div className="activity-text">criou este ticket para o sistema {systems.find(p => p.id == ticket.platform)?.name}</div>
@@ -1658,7 +1731,15 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers }) {
                   <td style={{ padding: '1.25rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
                       <div style={{ position: 'relative' }}>
-                        <img src={u.avatar} style={{ width: '42px', height: '42px', borderRadius: '12px', border: '2px solid var(--surface)', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)' }} />
+                        <div style={{ 
+                          width: '42px', height: '42px', borderRadius: '12px', 
+                          background: u.role === 'admin' ? 'var(--primary)' : 'var(--success)', 
+                          color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontWeight: '800', fontSize: '1rem', border: '2px solid var(--surface)', 
+                          boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)' 
+                        }}>
+                          {getInitials(u.name)}
+                        </div>
                         {u.is_online && <span style={{ position: 'absolute', bottom: '-2px', right: '-2px', width: '12px', height: '12px', background: '#10b981', borderRadius: '50%', border: '2px solid var(--surface)' }}></span>}
                       </div>
                       <div>
@@ -2201,5 +2282,66 @@ function ConfirmationModal({ config, onClose }) {
       </motion.div>
     </div>,
     document.body
+  );
+}
+
+// --- Perfil do Usuário ---
+function ProfileView({ user, onUpdate }) {
+  const [name, setName] = useState(user.name);
+  const [email, setEmail] = useState(user.email);
+  const [password, setPassword] = useState(user.password);
+  const [loading, setLoading] = useState(false);
+
+  const handleUpdate = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const { error } = await api.from('users').update({ name, email, password }).eq('id', user.id);
+      if (error) throw error;
+      toast.success('Perfil atualizado com sucesso!');
+      onUpdate({ ...user, name, email, password });
+      playSound('success');
+    } catch (err) {
+      toast.error('Erro ao atualizar perfil.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="animate-in" style={{ maxWidth: '600px', margin: '0 auto', width: '100%' }}>
+      <div style={{ textAlign: 'center', marginBottom: '2.5rem' }}>
+        <div style={{ 
+          width: '100px', height: '100px', borderRadius: '30px', 
+          background: 'var(--primary)', color: 'white', display: 'flex', 
+          alignItems: 'center', justifyContent: 'center', fontSize: '2.5rem', 
+          fontWeight: '800', margin: '0 auto 1.5rem', boxShadow: '0 20px 40px -10px rgba(99,102,241,0.5)'
+        }}>
+          {getInitials(name)}
+        </div>
+        <h2 style={{ fontSize: '2rem', fontWeight: '800' }}>Configurações de Perfil</h2>
+        <p style={{ color: 'var(--text-muted)' }}>Mantenha seus dados de acesso sempre atualizados.</p>
+      </div>
+
+      <div className="glass" style={{ padding: '2.5rem' }}>
+        <form onSubmit={handleUpdate} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+          <div className="form-group">
+            <label>Nome Completo</label>
+            <input value={name} onChange={e => setName(e.target.value)} placeholder="Seu nome" required />
+          </div>
+          <div className="form-group">
+            <label>E-mail (Login)</label>
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="seu@email.com" required />
+          </div>
+          <div className="form-group">
+            <label>Nova Senha</label>
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Sua senha" required />
+          </div>
+          <button type="submit" className="btn btn-primary" style={{ width: '100%', height: '50px', fontSize: '1rem' }} disabled={loading}>
+            {loading ? 'Salvando...' : 'Atualizar Dados'}
+          </button>
+        </form>
+      </div>
+    </div>
   );
 }

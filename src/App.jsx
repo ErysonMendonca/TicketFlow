@@ -435,13 +435,13 @@ export default function App() {
 
     const heartbeat = setInterval(() => {
       if (user) {
-        console.log(`[Presence] Heartbeat: ${user.name} is ${user.is_online ? 'Online' : 'Away'}`);
-        updatePresence(user.is_online);
+        console.log(`[Presence] Enviando sinal de vida para ${user.name}`);
+        updatePresence(true); // Força online enquanto a aba estiver aberta
       }
     }, 60000); // 1 minuto
 
     // Disparo imediato na inicialização
-    if (user) updatePresence(user.is_online);
+    if (user) updatePresence(true);
 
     window.addEventListener('error', handleGlobalError);
     window.addEventListener('beforeunload', () => updatePresence(false));
@@ -498,7 +498,7 @@ export default function App() {
     // Polling de usuários para simular Tempo Real (Necessário para API MySQL local)
     const usersPolling = setInterval(() => {
       fetchUsersList();
-    }, 10000); // Atualiza a cada 10 segundos
+    }, 30000); // Atualiza a cada 30 segundos para economizar recursos
 
     return () => {
       window.removeEventListener('error', handleGlobalError);

@@ -49,6 +49,11 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { api } from './lib/api';
 import toast, { Toaster } from 'react-hot-toast';
 import { PLATFORMS, DEV_STATUS, URGENCY_LEVELS, OTHER_STATUS, MOCK_USERS } from './constants';
+import { io } from 'socket.io-client';
+
+// Configuração do WebSocket (Ajustar para o IP da sua VPS em produção)
+const SOCKET_URL = window.location.hostname === 'localhost' ? 'http://localhost:3001' : `http://${window.location.hostname}:3001`;
+const socket = io(SOCKET_URL);
 
 // --- Utilitários ---
 const getStorageTickets = () => {
@@ -328,7 +333,42 @@ export default function App() {
 
     };
     initData();
-  }, []);
+
+    // Capturar erros globais do navegador (Frontend)
+    const handleGlobalError = (event) => {
+      const errorMsg = event.error?.message || event.message;
+      const stack = event.error?.stack;
+      logAction(null, 'CLIENT_ERROR', 'Runtime Error', `${errorMsg} | Stack: ${stack?.substring(0, 150)}...`);
+    };
+
+    window.addEventListener('error', handleGlobalError);
+    
+    // Ouvir novos tickets em tempo real
+    socket.on('new_ticket_alert', (newTicket) => {
+      // Se for admin ou o dev responsável (ou livre), notifica
+      if (user?.role === 'admin' || user?.role === 'dev') {
+        toast.success(`🔔 Novo Ticket: #${newTicket.id} - ${newTicket.title}`, {
+          duration: 8000,
+          position: 'top-right',
+          style: { background: 'var(--primary)', color: 'white', fontWeight: 'bold' }
+        });
+        
+        // Tocar um som opcional (pode ser adicionado depois)
+        // Recarregar a lista silenciosamente
+        fetchTickets();
+      }
+    });
+
+    socket.on('ticket_status_refreshed', () => {
+      fetchTickets();
+    });
+
+    return () => {
+      window.removeEventListener('error', handleGlobalError);
+      socket.off('new_ticket_alert');
+      socket.off('ticket_status_refreshed');
+    };
+  }, [user]);
 
   // Forçar visualização correta baseado no cargo
   useEffect(() => {
@@ -482,15 +522,23 @@ export default function App() {
       success: (newTicket) => {
         setTickets([newTicket, ...tickets]);
         setIsModalOpen(false);
+        // Notificar via WebSocket
+        socket.emit('ticket_created', newTicket);
         return `Ticket #${newTicket.id} criado!`;
       },
       error: (err) => `Erro: ${err.message}`
     });
   };
 
-  const updateTicketDetails = async (ticketId, updates) => {
+  const updateTicketDetails = async (ticketIdRaw, updates) => {
+    const ticketId = Number(ticketIdRaw);
+    const oldTickets = [...tickets];
+    
+    // Atualização Otimista
+    setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, ...updates } : t));
+
     const atualizar = async () => {
-      const oldTicket = tickets.find(t => t.id === ticketId);
+      const oldTicket = oldTickets.find(t => t.id === ticketId);
       const { error } = await api
         .from('tickets')
         .update(updates)
@@ -498,36 +546,48 @@ export default function App() {
 
       if (error) throw new Error(error.message);
 
-      setTickets(tickets.map(t => t.id === ticketId ? { ...t, ...updates } : t));
-
       if (oldTicket && updates.responsible !== undefined && oldTicket.responsible !== updates.responsible) {
         await logAction(ticketId, 'RESPONSIBLE_ASSIGNED', oldTicket.responsible || 'Sem atribuição', updates.responsible || 'Sem atribuição');
+        // Notificar mudança de responsável
+        socket.emit('status_updated', { id: ticketId, ...updates });
       }
     };
 
     toast.promise(atualizar(), {
       loading: 'Salvando alterações...',
       success: 'Ticket atualizado!',
-      error: 'Falha ao atualizar.'
+      error: (err) => {
+        setTickets(oldTickets); // Rollback
+        return 'Falha ao atualizar: ' + err.message;
+      }
     });
   };
 
-  const updateTicketStatus = async (ticketId, newStatus) => {
+  const updateTicketStatus = async (ticketIdRaw, newStatus) => {
+    const ticketId = Number(ticketIdRaw);
+    const oldTickets = [...tickets];
+    
+    // Atualização Otimista
+    setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, status: newStatus } : t));
+
     try {
-      const oldTicket = tickets.find(t => t.id === ticketId);
+      const oldTicket = oldTickets.find(t => t.id === ticketId);
       const { error } = await api
         .from('tickets')
         .update({ status: newStatus })
         .eq('id', ticketId);
 
       if (error) throw error;
-      setTickets(tickets.map(t => t.id === ticketId ? { ...t, status: newStatus } : t));
       toast.success('Status atualizado');
+      
+      // Notificar outros sobre a mudança de status
+      socket.emit('status_updated', { id: ticketId, status: newStatus });
 
       if (oldTicket && oldTicket.status !== newStatus) {
         await logAction(ticketId, 'STATUS_CHANGED', oldTicket.status, newStatus);
       }
     } catch (err) {
+      setTickets(oldTickets); // Rollback
       toast.error('Erro ao atualizar status');
     }
   };
@@ -1795,6 +1855,20 @@ function LogsView() {
         color: '#f59e0b',
         bg: 'rgba(245,158,11,0.1)',
         desc: `Ticket #${log.ticket_id} foi aberto pelo responsável`
+      },
+      'SYSTEM_ERROR': {
+        icon: <AlertCircle size={14} />,
+        label: 'Erro de Sistema',
+        color: '#ef4444',
+        bg: 'rgba(239,68,68,0.2)',
+        desc: <span style={{ color: '#b91c1c', fontWeight: '500' }}>{log.new_value}</span>
+      },
+      'CLIENT_ERROR': {
+        icon: <AlertTriangle size={14} />,
+        label: 'Erro de Interface (UI)',
+        color: '#f97316',
+        bg: 'rgba(249,115,22,0.1)',
+        desc: log.new_value
       }
     };
 

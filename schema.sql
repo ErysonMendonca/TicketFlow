@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS tickets (
     responsible VARCHAR(255) NULL,
     created_by INT NULL,
     attachments JSON NULL,
+    dev_notes TEXT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
@@ -46,6 +47,7 @@ CREATE TABLE IF NOT EXISTS system_logs (
     new_value VARCHAR(255) NULL,
     actor_name VARCHAR(255) NOT NULL,
     actor_role VARCHAR(50) NOT NULL,
+    details TEXT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE
 );

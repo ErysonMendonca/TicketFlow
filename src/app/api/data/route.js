@@ -147,6 +147,17 @@ export async function POST(request) {
 
   } catch (error) {
     console.error('Database API Error:', error);
+    
+    // Tenta registrar o erro no banco de dados (se for um erro de query, pode falhar aqui também)
+    try {
+      await pool.query(
+        'INSERT INTO system_logs (action_type, new_value, actor_name, actor_role) VALUES (?, ?, ?, ?)',
+        ['SYSTEM_ERROR', `API ERROR: ${error.message.substring(0, 200)}`, 'SERVER', 'system']
+      );
+    } catch (e) {
+      console.error('Falha crítica ao logar erro no banco:', e);
+    }
+
     return NextResponse.json({ data: null, error: { message: error.message } }, { status: 500 });
   }
 }

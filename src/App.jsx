@@ -1177,7 +1177,7 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
                         draggable
                         onDragStart={(e) => handleDragStart(e, ticket)}
                         onClick={() => onTicketClick(ticket)}
-                        className={`glass kanban-card ${ticket.created_by !== user?.id ? 'shared-card' : ''}`}
+                        className={`glass kanban-card ${ticket.created_by !== user?.id && Array.isArray(ticket.shared_with) && ticket.shared_with.includes(user?.id) ? 'shared-card' : ''}`}
                         style={{
                           padding: '1rem',
                           cursor: 'grab',
@@ -1557,7 +1557,7 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, allUsers, user
                   )}
                   <button className="btn btn-primary" style={{ width: '100%', marginTop: '0.5rem' }} onClick={() => {
                     const updates = { responsible, urgency, dev_notes: devNotes };
-                    if (user?.id === ticket.created_by) {
+                    if (user?.id === ticket.created_by || user?.name === ticket.responsible) {
                       updates.shared_with = sharedWith;
                     }
                     onUpdate(ticket.id, updates);

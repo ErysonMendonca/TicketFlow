@@ -484,6 +484,19 @@ export default function App() {
     socket.on('ticket_status_refreshed', () => {
       fetchTickets();
     });
+    
+    socket.on('ticket_shared_alert', (data) => {
+      // Se o usuário atual for um dos que recebeu o compartilhamento
+      if (data.sharedWith.includes(user?.id)) {
+        playSound('notification');
+        toast.success(`📂 Um ticket foi compartilhado com você: #${data.ticketId} - ${data.title}`, {
+          duration: 8000,
+          position: 'bottom-right',
+          style: { background: '#10b981', color: 'white', fontWeight: 'bold' }
+        });
+        fetchTickets();
+      }
+    });
 
     // Feedback sonoro global para cliques
     const handleGlobalClick = (e) => {
@@ -697,6 +710,13 @@ export default function App() {
         await logAction(ticketId, 'RESPONSIBLE_ASSIGNED', oldTicket.responsible || 'Sem atribuição', updates.responsible || 'Sem atribuição');
         // Notificar mudança de responsável
         socket.emit('status_updated', { id: ticketId, ...updates });
+      }
+
+      if (oldTicket && updates.shared_with !== undefined) {
+        const newShares = updates.shared_with.filter(id => !oldTicket.shared_with?.includes(id));
+        if (newShares.length > 0) {
+          socket.emit('ticket_shared', { ticketId, sharedWith: newShares, title: oldTicket.title });
+        }
       }
     };
 
@@ -995,7 +1015,7 @@ function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, onTi
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <h3 style={{ fontSize: '1.1rem', fontWeight: '600', marginBottom: '4px' }}>{ticket.title}</h3>
-                    {ticket.created_by !== user?.id && (
+                    {ticket.created_by !== user?.id && ticket.responsible !== user?.name && Array.isArray(ticket.shared_with) && ticket.shared_with.includes(user?.id) && (
                       <span style={{ background: 'var(--primary)', color: 'white', padding: '1px 6px', borderRadius: '4px', fontSize: '0.6rem', fontWeight: '800', textTransform: 'uppercase' }}>
                         Compartilhado
                       </span>
@@ -1169,7 +1189,7 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', marginBottom: '4px', alignItems: 'center' }}>
                           <span style={{ color: 'var(--primary)', fontWeight: '700' }}>#{ticket.id}</span>
                           <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                            {ticket.created_by !== user?.id && (
+                            {ticket.created_by !== user?.id && ticket.responsible !== user?.name && Array.isArray(ticket.shared_with) && ticket.shared_with.includes(user?.id) && (
                               <span style={{ background: 'var(--primary)', color: 'white', padding: '2px 6px', borderRadius: '4px', fontSize: '0.6rem', fontWeight: '800', textTransform: 'uppercase' }}>
                                 Compartilhado
                               </span>
@@ -1487,7 +1507,7 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, allUsers, user
                   </div>
 
                   {/* Sistema de Compartilhamento (ACL) */}
-                  {user?.id === ticket.created_by && (
+                  {(user?.id === ticket.created_by || user?.name === ticket.responsible) && (
                     <div className="form-group" style={{ marginBottom: '1.5rem' }}>
                       <label style={{ fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
                         <Users size={14} /> Compartilhar Ticket

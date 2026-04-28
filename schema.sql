@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS tickets (
     created_by INT NULL,
     attachments JSON NULL,
     dev_notes TEXT NULL,
+    shared_with JSON NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL

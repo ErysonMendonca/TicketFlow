@@ -26,6 +26,12 @@ io.on("connection", (socket) => {
     socket.broadcast.emit("ticket_status_refreshed", data);
   });
 
+  // Notificar compartilhamento de ticket
+  socket.on("ticket_shared", (data) => {
+    console.log(`LOG: Ticket #${data.ticketId} compartilhado com: ${data.sharedWith.join(', ')}`);
+    socket.broadcast.emit("ticket_shared_alert", data);
+  });
+
   // Notificar menção específica (@alguem)
   socket.on('mention_created', (data) => {
       console.log(`>>> Menção detectada: @${data.mentioned} no Ticket #${data.ticketId}`);

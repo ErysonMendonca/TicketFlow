@@ -566,7 +566,7 @@ export default function App() {
       setLoading(true);
       const { data, error } = await api
         .from('tickets')
-        .select('id, title, description, platform, status, urgency, responsible, created_by, created_at, updated_at, dev_notes')
+        .select('id, title, description, platform, status, urgency, responsible, created_by, created_at, updated_at, dev_notes, shared_with')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -781,9 +781,8 @@ export default function App() {
   const visibleTickets = (user?.role === 'dev')
     ? tickets.filter(t => 
         t.responsible === user.name || 
-        t.description?.includes(`@${user.name}`) || 
-        t.title?.includes(`@${user.name}`) ||
-        t.dev_notes?.includes(`@${user.name}`)
+        t.created_by === user.id ||
+        (Array.isArray(t.shared_with) && t.shared_with.includes(user.id))
       )
     : tickets;
 
@@ -922,6 +921,7 @@ export default function App() {
             onUpdate={updateTicketDetails}
             systems={systemsList}
             allUsers={allUsers}
+            user={user}
           />
         )}
       </AnimatePresence>
@@ -982,7 +982,8 @@ function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, onTi
                 display: 'flex', 
                 alignItems: 'center', 
                 justifyContent: 'space-between', 
-                cursor: (user?.role === 'admin' || user?.role === 'dev') ? 'pointer' : 'default' 
+                cursor: (user?.role === 'admin' || user?.role === 'dev') ? 'pointer' : 'default',
+                borderLeft: ticket.created_by !== user?.id ? '4px solid var(--primary)' : 'none'
               }}
               onClick={() => onTicketClick(ticket)}
             >
@@ -992,7 +993,14 @@ function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, onTi
                   <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{new Date(ticket.created_at).toLocaleDateString('pt-BR')}</span>
                 </div>
                 <div>
-                  <h3 style={{ fontSize: '1.1rem', fontWeight: '600', marginBottom: '4px' }}>{ticket.title}</h3>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <h3 style={{ fontSize: '1.1rem', fontWeight: '600', marginBottom: '4px' }}>{ticket.title}</h3>
+                    {ticket.created_by !== user?.id && (
+                      <span style={{ background: 'var(--primary)', color: 'white', padding: '1px 6px', borderRadius: '4px', fontSize: '0.6rem', fontWeight: '800', textTransform: 'uppercase' }}>
+                        Compartilhado
+                      </span>
+                    )}
+                  </div>
                   <div style={{ display: 'flex', gap: '12px' }}>
                     <div className="card-info-row">
                       <LayoutDashboard size={12} /> {systems.find(p => p.id == ticket.platform)?.name || ticket.platform}
@@ -1149,16 +1157,25 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
                         draggable
                         onDragStart={(e) => handleDragStart(e, ticket)}
                         onClick={() => onTicketClick(ticket)}
-                        className="glass kanban-card"
+                        className={`glass kanban-card ${ticket.created_by !== user?.id ? 'shared-card' : ''}`}
                         style={{
                           padding: '1rem',
                           cursor: 'grab',
-                          borderLeft: `5px solid ${urgencyColor}`
+                          borderLeft: `5px solid ${urgencyColor}`,
+                          boxShadow: ticket.created_by !== user?.id ? '0 0 0 2px var(--primary)40, 0 4px 12px rgba(0,0,0,0.1)' : 'none',
+                          position: 'relative'
                         }}
                       >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', marginBottom: '4px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', marginBottom: '4px', alignItems: 'center' }}>
                           <span style={{ color: 'var(--primary)', fontWeight: '700' }}>#{ticket.id}</span>
-                          <span style={{ color: 'var(--text-muted)', fontWeight: '600' }}>{systems.find(p => p.id == ticket.platform)?.name || ticket.platform}</span>
+                          <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                            {ticket.created_by !== user?.id && (
+                              <span style={{ background: 'var(--primary)', color: 'white', padding: '2px 6px', borderRadius: '4px', fontSize: '0.6rem', fontWeight: '800', textTransform: 'uppercase' }}>
+                                Compartilhado
+                              </span>
+                            )}
+                            <span style={{ color: 'var(--text-muted)', fontWeight: '600' }}>{systems.find(p => p.id == ticket.platform)?.name || ticket.platform}</span>
+                          </div>
                         </div>
                         <h4 style={{ fontSize: '0.9rem', fontWeight: '600', marginBottom: '8px' }}>{ticket.title}</h4>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1341,13 +1358,12 @@ function TicketModal({ onClose, onSubmit, systems }) {
   );
 }
 
-function TicketDetailsModal({ ticket, onClose, onUpdate, systems, allUsers }) {
+function TicketDetailsModal({ ticket, onClose, onUpdate, systems, allUsers, user }) {
   const [urgency, setUrgency] = useState(ticket.urgency || '');
   const [responsible, setResponsible] = useState(ticket.responsible || '');
   const [isCustomResp, setIsCustomResp] = useState(false);
   const [devNotes, setDevNotes] = useState(ticket.dev_notes || '');
-  const [mentionQuery, setMentionQuery] = useState('');
-  const [showMentionList, setShowMentionList] = useState(false);
+  const [sharedWith, setSharedWith] = useState(Array.isArray(ticket.shared_with) ? ticket.shared_with : []);
   const [viewingMedia, setViewingMedia] = useState(null);
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -1464,47 +1480,67 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, allUsers }) {
                     <label style={{ fontSize: '0.75rem' }}>Notas Técnicas</label>
                     <textarea 
                       value={devNotes} 
-                      onChange={e => {
-                        const val = e.target.value;
-                        setDevNotes(val);
-                        const lastWord = val.split(/\s/).pop();
-                        if (lastWord.startsWith('@')) {
-                          setMentionQuery(lastWord.slice(1));
-                          setShowMentionList(true);
-                        } else {
-                          setShowMentionList(false);
-                        }
-                      }} 
-                      placeholder="Logs técnicos (use @ para mencionar)..." 
+                      onChange={e => setDevNotes(e.target.value)} 
+                      placeholder="Logs técnicos e observações internas..." 
                       style={{ minHeight: '120px', fontSize: '0.85rem', padding: '10px' }}
                     ></textarea>
-
-                    {showMentionList && (
-                      <div className="mention-dropdown glass">
-                        {allUsers.filter(u => u.name.toLowerCase().includes(mentionQuery.toLowerCase())).map(u => (
-                          <div key={u.id} className="mention-item" onClick={() => {
-                            const words = devNotes.split(/\s/);
-                            words.pop();
-                            setDevNotes(words.join(' ') + (words.length > 0 ? ' ' : '') + `@${u.name} `);
-                            setShowMentionList(false);
-                            playSound('click');
-                          }}>
-                            <img src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${u.name}`} style={{ width: '20px', height: '20px', borderRadius: '50%' }} />
-                            <span>{u.name}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
                   </div>
+
+                  {/* Sistema de Compartilhamento (ACL) */}
+                  {user?.id === ticket.created_by && (
+                    <div className="form-group" style={{ marginBottom: '1.5rem' }}>
+                      <label style={{ fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <Users size={14} /> Compartilhar Ticket
+                      </label>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', background: 'rgba(0,0,0,0.02)', padding: '10px', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
+                        <select 
+                          className="sharing-select"
+                          style={{ margin: 0, padding: '6px', fontSize: '0.8rem' }}
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value);
+                            if (val && !sharedWith.includes(val)) {
+                              setSharedWith([...sharedWith, val]);
+                            }
+                            e.target.value = "";
+                          }}
+                        >
+                          <option value="">Selecionar usuário...</option>
+                          {allUsers
+                            .filter(u => u.id !== user.id && !sharedWith.includes(u.id))
+                            .map(u => <option key={u.id} value={u.id}>{u.name} ({u.role})</option>)
+                          }
+                        </select>
+                        
+                        {sharedWith.length > 0 && (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '4px' }}>
+                            {sharedWith.map(uId => {
+                              const u = allUsers.find(userObj => userObj.id === uId);
+                              return (
+                                <div key={uId} style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'var(--primary)', color: 'white', padding: '2px 8px', borderRadius: '12px', fontSize: '0.7rem', fontWeight: '600' }}>
+                                  {u?.name || 'User'}
+                                  <X size={12} style={{ cursor: 'pointer' }} onClick={() => setSharedWith(sharedWith.filter(id => id !== uId))} />
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Indicador para usuários compartilhados */}
+                  {user?.id !== ticket.created_by && sharedWith.includes(user?.id) && (
+                    <div style={{ padding: '10px', background: 'var(--primary)15', borderRadius: '12px', border: '1px solid var(--primary)30', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <ShieldCheck size={16} color="var(--primary)" />
+                      <span style={{ fontSize: '0.75rem', fontWeight: '600', color: 'var(--primary)' }}>Você tem acesso compartilhado a este ticket.</span>
+                    </div>
+                  )}
                   <button className="btn btn-primary" style={{ width: '100%', marginTop: '0.5rem' }} onClick={() => {
-                    const mentions = devNotes.match(/@(\w+)/g);
-                    if (mentions) {
-                      mentions.forEach(m => {
-                        const name = m.replace('@', '');
-                        socket.emit('mention_created', { ticketId: ticket.id, mentioned: name, by: user.name });
-                      });
+                    const updates = { responsible, urgency, dev_notes: devNotes };
+                    if (user?.id === ticket.created_by) {
+                      updates.shared_with = sharedWith;
                     }
-                    onUpdate(ticket.id, { responsible, urgency, dev_notes: devNotes });
+                    onUpdate(ticket.id, updates);
                     playSound('success');
                     onClose();
                   }}>Salvar Alterações</button>

@@ -8,7 +8,7 @@ export async function POST(request) {
     const { action, table, cols = '*', data, filters = [], order, limit, single } = body;
 
     // Proteção super básica contra SQL Injection no nome da tabela e chamadas indesejadas
-    const allowedTables = ['users', 'systems', 'tickets', 'system_logs', 'ticket_messages'];
+    const allowedTables = ['users', 'setores', 'systems', 'tickets', 'system_logs', 'ticket_messages'];
     if (!allowedTables.includes(table)) {
       console.warn('Tabela não permitida:', table);
       return NextResponse.json({ error: 'Tabela não permitida' }, { status: 400 });

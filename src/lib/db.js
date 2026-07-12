@@ -10,7 +10,6 @@ export const pool = mysql.createPool({
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
-  ssl: {
-    rejectUnauthorized: false
-  }
+  // ponytail: SSL ligado por padrão (MySQL remoto/prod); desligar no local com MYSQL_SSL=false
+  ssl: process.env.MYSQL_SSL === 'false' ? undefined : { rejectUnauthorized: false }
 });

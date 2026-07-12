@@ -26,6 +26,11 @@ io.on("connection", (socket) => {
     socket.broadcast.emit("ticket_status_refreshed", data);
   });
 
+  // Quando a lista de membros muda (criação/remoção)
+  socket.on("users_changed", () => {
+    socket.broadcast.emit("users_refreshed");
+  });
+
   // Notificar compartilhamento de ticket
   socket.on("ticket_shared", (data) => {
     console.log(`LOG: Ticket #${data.ticketId} compartilhado com: ${data.sharedWith.join(', ')}`);

@@ -15,6 +15,7 @@ import {
   LogOut,
   ShieldCheck,
   Lock,
+  Mail,
   LayoutDashboard,
   Clock,
   Edit3,
@@ -39,20 +40,24 @@ import {
   MessageSquare,
   MoreHorizontal,
   RefreshCw,
+  ArrowUpDown,
+  Link2,
   PlusCircle,
   LogIn,
   Eye,
+  EyeOff,
   Image as ImageIcon
 } from 'lucide-react';
 
 import { motion, AnimatePresence } from 'framer-motion';
 import { api } from './lib/api';
 import toast, { Toaster } from 'react-hot-toast';
-import { PLATFORMS, DEV_STATUS, URGENCY_LEVELS, OTHER_STATUS, MOCK_USERS } from './constants';
+import { PLATFORMS, DEV_STATUS, URGENCY_LEVELS, OTHER_STATUS, MOCK_USERS, TICKET_TYPES } from './constants';
 import { io } from 'socket.io-client';
 
-// Configuração do WebSocket (Conecta no mesmo domínio via Proxy do Nginx)
-const socket = io({
+// WebSocket: em produção conecta no mesmo domínio (proxy Nginx → servidor de socket);
+// em dev, aponta pro servidor local via NEXT_PUBLIC_SOCKET_URL (ex.: http://localhost:3001).
+const socket = io(process.env.NEXT_PUBLIC_SOCKET_URL || undefined, {
   path: '/socket.io/',
   transports: ['polling', 'websocket'],
   upgrade: true
@@ -149,30 +154,35 @@ const LoadingSpinner = ({ label = 'Carregando informações...' }) => (
   </div>
 );
 
-// --- Tela de Login ---
-function LoginScreen({ onLogin, theme }) {
+// --- Tela de Login (sequência animada + glassmorphism dark) ---
+// Sequência (~2.5s): logo girando com pingos d'água → nome surge → conjunto sobe/encolhe → form desliza → botão fade.
+// Só transform/opacity nas animações (60fps, sem reflow).
+function LoginScreen({ onLogin }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [phase, setPhase] = useState(0); // 0 carregando · 1 marca · 2 reposiciona · 3 formulário
+
+  useEffect(() => {
+    // Introdução mais lenta e sentida (~2s girando → revela → sobe → form)
+    const timers = [
+      setTimeout(() => setPhase(1), 2000), // logo para + nome "TynkeTech" surge
+      setTimeout(() => setPhase(2), 3100), // conjunto encolhe e sobe pro topo do glass
+      setTimeout(() => setPhase(3), 4100), // formulário entra
+    ];
+    return () => timers.forEach(clearTimeout);
+  }, []);
 
   const handleLogin = async (e) => {
     e.preventDefault();
     setError('');
     setIsLoading(true);
-
     try {
       const { data, error: dbError } = await api
-        .from('users')
-        .select('*')
-        .eq('email', email)
-        .eq('password', password)
-        .single();
-
-      if (dbError || !data) {
-        throw new Error('Email ou senha incorretos.');
-      }
-
+        .from('users').select('*').eq('email', email).eq('password', password).single();
+      if (dbError || !data) throw new Error('Email ou senha incorretos.');
       onLogin(data);
     } catch (err) {
       setError(err.message);
@@ -181,58 +191,313 @@ function LoginScreen({ onLogin, theme }) {
     }
   };
 
+  const easeOut = [0.22, 1, 0.36, 1];
+  const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.22, delayChildren: 0.15 } } };
+  const slideItem = { hidden: { opacity: 0, x: -34 }, show: { opacity: 1, x: 0, transition: { duration: 0.7, ease: easeOut } } };
+  const fadeItem = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { duration: 0.85, ease: 'easeOut' } } };
+
   return (
-    <div className="login-container">
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="glass login-card"
-      >
-        <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-          <img 
-            src={theme === 'dark' ? '/logomarca_white.png' : '/logomarca_black.png'} 
-            className="login-logo" 
-            alt="TynkeTech" 
-          />
-          <h1 style={{ fontSize: '1.5rem', fontWeight: '700' }}>Acesso ao Sistema</h1>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>Entre com suas credenciais</p>
-        </div>
+    <div className="tt-login">
+      <div className="tt-card">
+        {/* Camada de vidro — só fade de opacidade */}
+        <motion.div className="tt-card-glass" initial={{ opacity: 0 }} animate={{ opacity: phase >= 2 ? 1 : 0 }} transition={{ duration: 1.0, ease: 'easeOut' }} />
 
-        <form onSubmit={handleLogin}>
-          <div className="form-group">
-            <label>E-mail</label>
-            <input
-              type="email"
-              placeholder="seu@email.com"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              required
-            />
-          </div>
-
-          <div className="form-group">
-            <label>Senha de Acesso</label>
-            <div style={{ position: 'relative' }}>
-              <input
-                type="password"
-                placeholder="Sua senha"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                style={{ paddingLeft: '40px' }}
-                required
+        <div className="tt-card-inner">
+          {/* Marca: começa grande e centralizada (girando) → sobe e encolhe pro topo. BRAND_Y≈150 = metade do card (tunável) */}
+          <motion.div
+            className="tt-brand"
+            initial={{ y: 150, scale: 2.3 }}
+            animate={phase < 2 ? { y: 150, scale: 2.3 } : { y: 0, scale: 1 }}
+            transition={{ duration: 1.2, ease: easeOut }}
+          >
+            <div className="tt-logo-holder">
+              <motion.img
+                src="/TynkeTech.png"
+                alt="TynkeTech"
+                className="tt-logo"
+                animate={phase === 0 ? { rotate: 360 } : { rotate: 0 }}
+                transition={phase === 0 ? { repeat: Infinity, duration: 1.4, ease: 'linear' } : { duration: 0.9, ease: easeOut }}
               />
-              <Lock size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-20%)', color: 'var(--text-muted)' }} />
+              {/* Pingos d'água saindo da logo (só na fase de carregamento) */}
+              {phase === 0 && Array.from({ length: 10 }).map((_, i) => {
+                const a = (i / 10) * Math.PI * 2;
+                return (
+                  <motion.span
+                    key={i}
+                    className="tt-drop"
+                    initial={{ opacity: 0, x: 0, y: 0, scale: 0.4 }}
+                    animate={{ opacity: [0, 0.9, 0], x: Math.cos(a) * 74, y: Math.sin(a) * 74, scale: [0.4, 1, 0.25] }}
+                    transition={{ repeat: Infinity, duration: 1.6, delay: i * 0.07, ease: 'easeOut' }}
+                  />
+                );
+              })}
+            </div>
+
+            <AnimatePresence>
+              {phase >= 1 && (
+                <motion.span className="tt-name" initial={{ opacity: 0, x: -16 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.75, ease: easeOut }}>
+                  TynkeTech
+                </motion.span>
+              )}
+            </AnimatePresence>
+          </motion.div>
+
+          {/* Formulário — entra escalonado; botão faz fade por último */}
+          <AnimatePresence>
+            {phase >= 3 && (
+              <motion.form className="tt-form" onSubmit={handleLogin} variants={stagger} initial="hidden" animate="show">
+                <motion.div className="tt-field" variants={slideItem}>
+                  <label>E-mail</label>
+                  <div className="tt-pass">
+                    <Mail size={18} className="tt-pass-icon" />
+                    <input type="email" placeholder="seu@email.com" value={email} onChange={e => setEmail(e.target.value)} required />
+                  </div>
+                </motion.div>
+                <motion.div className="tt-field" variants={slideItem}>
+                  <label>Senha</label>
+                  <div className="tt-pass">
+                    <Lock size={18} className="tt-pass-icon" />
+                    <input type={showPassword ? 'text' : 'password'} placeholder="Sua senha" value={password} onChange={e => setPassword(e.target.value)} required />
+                    <button type="button" className="tt-eye" onClick={() => setShowPassword(v => !v)} aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}>
+                      {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </button>
+                  </div>
+                </motion.div>
+                {error && <p className="tt-error">{error}</p>}
+                <motion.button type="submit" className="tt-submit" variants={fadeItem} disabled={isLoading}>
+                  {isLoading ? 'Autenticando…' : 'Entrar'}
+                </motion.button>
+                <motion.div className="tt-foot" variants={fadeItem}>© 2026 TynkeTech · Powered by Zaya Software</motion.div>
+              </motion.form>
+            )}
+          </AnimatePresence>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Tela pública de auto-registro via link (#/registro/<tipo>/<id>/<papel>) — mesma casca glass do login
+function RegistroScreen({ hash }) {
+  const parts = hash.replace(/^#\/?/, '').split('/'); // ['registro','setor','2','user']
+  const tipo = parts[1];                 // 'setor' | 'categoria'
+  const id = Number(parts[2]);
+  const papel = parts[3] === 'dev' ? 'dev' : 'user';
+
+  const [target, setTarget] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [form, setForm] = useState({ name: '', email: '', password: '' });
+  const [submitting, setSubmitting] = useState(false);
+  const [done, setDone] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [phase, setPhase] = useState(0); // mesma intro do login: 0 carregando · 1 marca · 2 reposiciona · 3 conteúdo
+
+  useEffect(() => {
+    (async () => {
+      const table = tipo === 'setor' ? 'setores' : 'systems';
+      const { data } = await api.from(table).select('*').eq('id', id).single();
+      setTarget(data || null);
+      setLoading(false);
+    })();
+  }, []);
+
+  useEffect(() => {
+    const timers = [
+      setTimeout(() => setPhase(1), 2000),
+      setTimeout(() => setPhase(2), 3100),
+      setTimeout(() => setPhase(3), 4100),
+    ];
+    return () => timers.forEach(clearTimeout);
+  }, []);
+
+  const irParaLogin = () => { window.location.hash = '#/login'; };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!form.name || !form.email || !form.password) { toast.error('Preencha nome, e-mail e senha.'); return; }
+    setSubmitting(true);
+    try {
+      const setorId = tipo === 'setor' ? id : (target?.setor_id ?? null);
+      const { error } = await api.from('users').insert([{
+        name: form.name, email: form.email, password: form.password,
+        role: papel, setor_id: setorId,
+        avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${form.email}`
+      }]);
+      if (error) throw new Error(error.message);
+      // Quem atende (dev) entra como responsável do setor/categoria
+      if (papel === 'dev' && target) {
+        const table = tipo === 'setor' ? 'setores' : 'systems';
+        const resp = Array.isArray(target.primary_responsibles) ? target.primary_responsibles : [];
+        if (!resp.includes(form.name)) {
+          await api.from(table).update({ primary_responsibles: [...resp, form.name] }).eq('id', id);
+        }
+      }
+      setDone(true);
+      playSound('success');
+    } catch (err) {
+      toast.error('Erro ao cadastrar: ' + (err.message?.includes('Duplicate') ? 'e-mail já cadastrado.' : err.message));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const easeOut = [0.22, 1, 0.36, 1];
+
+  // Conteúdo revelado após a intro (fase 3): form, link inválido ou sucesso
+  const conteudo = () => {
+    if (loading) return <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.9rem', textAlign: 'center' }}>Carregando…</p>;
+    if (!target) return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem', width: '100%' }}>
+        <h1 className="tt-reg-title">Link inválido</h1>
+        <p className="tt-reg-text">Este link de registro não é válido. Peça um novo ao administrador.</p>
+        <button className="tt-ghost" onClick={irParaLogin}>Ir para o login</button>
+      </div>
+    );
+    if (done) return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.85rem', width: '100%' }}>
+        <CheckCircle size={44} color="#10b981" />
+        <h1 className="tt-reg-title">Cadastro concluído!</h1>
+        <p className="tt-reg-text">Você já pode entrar no sistema com seu e-mail e senha.</p>
+        <button className="tt-submit" onClick={irParaLogin}>Ir para o login</button>
+      </div>
+    );
+    return (
+      <>
+        <p className="tt-reg-sub">
+          {tipo === 'categoria' ? 'Sub-Setor' : 'Setor'}: <strong>{target.name}</strong> · {papel === 'dev' ? 'atende os chamados' : 'abre chamados'}
+        </p>
+        <form className="tt-form" onSubmit={handleSubmit}>
+          <div className="tt-field">
+            <label>Nome</label>
+            <div className="tt-pass">
+              <UserIcon size={18} className="tt-pass-icon" />
+              <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Seu nome" required />
             </div>
           </div>
-
-          {error && <p style={{ color: '#ef4444', fontSize: '0.8rem', marginBottom: '1rem', textAlign: 'center' }}>{error}</p>}
-
-          <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={isLoading}>
-            {isLoading ? 'Autenticando...' : 'Entrar no Sistema'}
-          </button>
+          <div className="tt-field">
+            <label>E-mail</label>
+            <div className="tt-pass">
+              <Mail size={18} className="tt-pass-icon" />
+              <input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="seu@email.com" required />
+            </div>
+          </div>
+          <div className="tt-field">
+            <label>Senha</label>
+            <div className="tt-pass">
+              <Lock size={18} className="tt-pass-icon" />
+              <input type={showPassword ? 'text' : 'password'} value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} placeholder="Crie uma senha" required />
+              <button type="button" className="tt-eye" onClick={() => setShowPassword(v => !v)} aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}>
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
+          </div>
+          <button type="submit" className="tt-submit" disabled={submitting}>{submitting ? 'Cadastrando…' : 'Cadastrar'}</button>
+          <button type="button" className="tt-ghost" onClick={irParaLogin}>Já tenho conta</button>
+          <div className="tt-foot">© 2026 TynkeTech · Powered by Zaya Software</div>
         </form>
-      </motion.div>
+      </>
+    );
+  };
+
+  const semForm = loading || !target || done; // estados curtos → centralizar no espaço restante
+
+  return (
+    <div className="tt-login">
+      <div className="tt-card" style={{ minHeight: 580 }}>
+        <motion.div className="tt-card-glass" initial={{ opacity: 0 }} animate={{ opacity: phase >= 2 ? 1 : 0 }} transition={{ duration: 1.0, ease: 'easeOut' }} />
+        <div className="tt-card-inner">
+          {/* Mesma sequência do login: logo girando + pingos → nome → sobe/encolhe. BRAND_Y≈219 = metade do card (580) */}
+          <motion.div
+            className="tt-brand"
+            initial={{ y: 219, scale: 2.3 }}
+            animate={phase < 2 ? { y: 219, scale: 2.3 } : { y: 0, scale: 1 }}
+            transition={{ duration: 1.2, ease: easeOut }}
+          >
+            <div className="tt-logo-holder">
+              <motion.img
+                src="/TynkeTech.png" alt="TynkeTech" className="tt-logo"
+                animate={phase === 0 ? { rotate: 360 } : { rotate: 0 }}
+                transition={phase === 0 ? { repeat: Infinity, duration: 1.4, ease: 'linear' } : { duration: 0.9, ease: easeOut }}
+              />
+              {phase === 0 && Array.from({ length: 10 }).map((_, i) => {
+                const a = (i / 10) * Math.PI * 2;
+                return (
+                  <motion.span key={i} className="tt-drop"
+                    initial={{ opacity: 0, x: 0, y: 0, scale: 0.4 }}
+                    animate={{ opacity: [0, 0.9, 0], x: Math.cos(a) * 74, y: Math.sin(a) * 74, scale: [0.4, 1, 0.25] }}
+                    transition={{ repeat: Infinity, duration: 1.6, delay: i * 0.07, ease: 'easeOut' }}
+                  />
+                );
+              })}
+            </div>
+            <AnimatePresence>
+              {phase >= 1 && (
+                <motion.span className="tt-name" initial={{ opacity: 0, x: -16 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.75, ease: easeOut }}>
+                  TynkeTech
+                </motion.span>
+              )}
+            </AnimatePresence>
+          </motion.div>
+
+          <AnimatePresence>
+            {phase >= 3 && (
+              <motion.div
+                initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.5 }}
+                style={{ width: '100%', flex: semForm ? 1 : 'none', display: 'flex', flexDirection: 'column', justifyContent: semForm ? 'center' : 'flex-start' }}
+              >
+                {conteudo()}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      </div>
     </div>
+  );
+}
+
+// Modal p/ gerar/copiar o link de registro de um setor ou categoria
+function RegistroLinkModal({ tipo, target, onClose }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const [papel, setPapel] = useState('user');
+  if (!mounted) return null;
+  const link = `${window.location.origin}/#/registro/${tipo}/${target.id}/${papel}`;
+  const copiar = async () => {
+    try { await navigator.clipboard.writeText(link); toast.success('Link copiado!'); }
+    catch { toast.error('Copie o link manualmente.'); }
+  };
+  return createPortal(
+    <div className="overlay" style={{ alignItems: 'center', padding: '1rem' }} onClick={onClose}>
+      <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="glass modal" style={{ width: '460px', maxWidth: '94vw', padding: '1.75rem' }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.25rem' }}>
+          <div>
+            <span style={{ fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 800, letterSpacing: '0.05em' }}>Link de registro</span>
+            <h3 style={{ margin: '2px 0 0', fontSize: '1.25rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Link2 size={18} color="var(--primary)" /> {target.name}
+            </h3>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{tipo === 'categoria' ? 'Sub-Setor' : 'Setor'}</span>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={20} /></button>
+        </div>
+
+        <div className="form-group">
+          <label style={{ fontSize: '0.75rem' }}>Quem entrar por este link será…</label>
+          <select value={papel} onChange={e => setPapel(e.target.value)}>
+            <option value="user">Usuário que abre chamados</option>
+            <option value="dev">Membro que atende (vira responsável)</option>
+          </select>
+        </div>
+
+        <div style={{ marginTop: '1rem' }}>
+          <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Link (envie para a pessoa)</label>
+          <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
+            <input readOnly value={link} onFocus={e => e.target.select()} style={{ flex: 1, fontSize: '0.8rem', margin: 0 }} />
+            <button className="btn btn-primary" style={{ flex: '0 0 auto' }} onClick={copiar}>Copiar</button>
+          </div>
+        </div>
+      </motion.div>
+    </div>,
+    document.body
   );
 }
 
@@ -242,11 +507,11 @@ function AppHeader({ currentView, setView, user, theme, toggleTheme, onLogout })
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   
   const menus = [
-    { id: 'tickets', name: 'Tickets', icon: <UserIcon size={18} />, roles: ['user', 'admin'] },
-    { id: 'users', name: 'Usuários', icon: <Users size={18} />, roles: ['admin'] },
-    { id: 'systems', name: 'Sistemas', icon: <Layers size={18} />, roles: ['admin'] },
-    { id: 'kanban', name: 'Kanban', icon: <LayoutDashboard size={18} />, roles: ['admin'] },
+    { id: 'tickets', name: 'Tickets', icon: <UserIcon size={18} />, roles: ['user', 'dev', 'admin'] },
+    { id: 'kanban', name: 'Kanban', icon: <LayoutDashboard size={18} />, roles: ['admin', 'dev'] },
     { id: 'analytics', name: 'Analytics', icon: <BarChart3 size={18} />, roles: ['admin'] },
+    { id: 'users', name: 'Usuários', icon: <Users size={18} />, roles: ['admin'] },
+    { id: 'setores', name: 'Setores', icon: <Layers size={18} />, roles: ['admin'] },
     { id: 'logs', name: 'Logs', icon: <Activity size={18} />, roles: ['admin'] },
   ];
 
@@ -382,6 +647,7 @@ export default function App() {
   const [search, setSearch] = useState('');
   const [hash, setHash] = useState(window.location.hash);
   const [viewingTicket, setViewingTicket] = useState(null);
+  const [acceptGate, setAcceptGate] = useState(null); // ticket aguardando aceite antes de abrir os detalhes
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
 
   const [confirmConfig, setConfirmConfig] = useState({ isOpen: false, title: '', message: '', onConfirm: null });
@@ -393,6 +659,7 @@ export default function App() {
   const closeConfirm = () => setConfirmConfig({ ...confirmConfig, isOpen: false });
 
   const [systemsList, setSystemsList] = useState([]);
+  const [setoresList, setSetoresList] = useState([]);
   const [systemLogs, setSystemLogs] = useState([]);
   const [allUsers, setAllUsers] = useState([]);
 
@@ -405,6 +672,12 @@ export default function App() {
 
   useEffect(() => {
     const initData = async () => {
+      // Carregar Setores
+      try {
+        const { data: setData } = await api.from('setores').select('*').order('name');
+        setSetoresList(setData || []);
+      } catch(e) { setSetoresList([]); }
+
       // Carregar Sistemas
       try {
         const { data: sysData, error: sysErr } = await api.from('systems').select('*');
@@ -484,7 +757,12 @@ export default function App() {
     socket.on('ticket_status_refreshed', () => {
       fetchTickets();
     });
-    
+
+    // Membro criado/removido em outro cliente → atualiza a lista sem recarregar
+    socket.on('users_refreshed', () => {
+      fetchUsersList();
+    });
+
     socket.on('ticket_shared_alert', (data) => {
       // Se o usuário atual for um dos que recebeu o compartilhamento
       if (data.sharedWith.includes(user?.id)) {
@@ -520,15 +798,14 @@ export default function App() {
       clearInterval(usersPolling);
       socket.off('new_ticket_alert');
       socket.off('ticket_status_refreshed');
+      socket.off('users_refreshed');
     };
   }, [user]);
 
-  // Forçar visualização correta baseado no cargo
+  // Ao logar, o dev cai no Kanban por padrão; depois pode navegar (Tickets/Kanban) livremente
   useEffect(() => {
-    if (user?.role === 'dev' && view !== 'kanban') {
-      setView('kanban');
-    }
-  }, [user, view]);
+    if (user?.role === 'dev') setView('kanban');
+  }, [user]);
 
   const fetchLogs = async () => {
     try {
@@ -579,7 +856,7 @@ export default function App() {
       setLoading(true);
       const { data, error } = await api
         .from('tickets')
-        .select('id, title, description, platform, status, urgency, responsible, created_by, created_at, updated_at, dev_notes, shared_with')
+        .select('id, title, description, setor_id, origin_setor_id, platform, status, urgency, ticket_type, responsible, delivery_date, created_by, created_at, updated_at, dev_notes, shared_with')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -652,14 +929,16 @@ export default function App() {
         }
       }
 
-      const ticketToInsert = { ...formData };
-      delete ticketToInsert.files;
-      ticketToInsert.attachments = uploadedAttachments;
-
       const { data, error } = await api
         .from('tickets')
         .insert([{
-          ...ticketToInsert,
+          title: formData.title,
+          description: formData.description,
+          setor_id: formData.setor ? Number(formData.setor) : null,
+          origin_setor_id: user?.setor_id || null, // setor de origem = setor de quem abriu
+          platform: formData.platform || null, // id da categoria (só quando o setor ramifica)
+          responsible: formData.responsible || null,
+          attachments: uploadedAttachments,
           status: 'backlog',
           urgency: 'leve',
           created_by: user?.id || null
@@ -710,6 +989,19 @@ export default function App() {
         await logAction(ticketId, 'RESPONSIBLE_ASSIGNED', oldTicket.responsible || 'Sem atribuição', updates.responsible || 'Sem atribuição');
         // Notificar mudança de responsável
         socket.emit('status_updated', { id: ticketId, ...updates });
+      }
+
+      // Histórico do prazo de entrega (aceite e reagendamento após vencer)
+      if (oldTicket && updates.delivery_date !== undefined && toDateInput(oldTicket.delivery_date) !== updates.delivery_date) {
+        const venceu = isOverdue(oldTicket);
+        const oldFmt = oldTicket.delivery_date ? toDateInput(oldTicket.delivery_date) : null;
+        if (venceu) await logAction(ticketId, 'DELIVERY_OVERDUE', oldFmt, `Entrega vencida (era ${oldFmt})`);
+        await logAction(ticketId, oldFmt ? 'DELIVERY_DATE_CHANGED' : 'DELIVERY_DATE_SET', oldFmt, updates.delivery_date);
+      }
+
+      if (oldTicket && updates.status !== undefined && oldTicket.status !== updates.status) {
+        await logAction(ticketId, 'STATUS_CHANGED', oldTicket.status, updates.status);
+        socket.emit('status_updated', { id: ticketId, status: updates.status });
       }
 
       if (oldTicket && updates.shared_with !== undefined) {
@@ -787,20 +1079,52 @@ export default function App() {
       `Deseja remover ${uName} da equipe? Esta ação não pode ser desfeita.`,
       async () => {
         const { error } = await api.from('users').delete().eq('id', uId);
-        if (!error) { 
-          toast.success('Usuário removido'); 
-          // Atualiza a lista de usuários se necessário ou recarrega
-          window.location.reload(); // Simples recarregamento para atualizar a view
-        } else { 
-          toast.error('Erro ao remover usuário.'); 
+        if (!error) {
+          toast.success('Usuário removido');
+          fetchUsersList();                 // atualiza a lista na hora, sem recarregar a página
+          socket.emit('users_changed');     // avisa os outros clientes conectados
+        } else {
+          toast.error('Erro ao remover usuário.');
         }
       }
     );
   };
 
+  // Abre o modal de detalhes completo (busca anexos sob demanda)
+  const openTicketDetails = async (t) => {
+    const { data } = await api.from('tickets').select('attachments').eq('id', t.id).single();
+    setViewingTicket({ ...t, attachments: data?.attachments || [] });
+    playSound('open');
+    if (user && (user.role === 'dev' || user.role === 'admin')) {
+      await logAction(t.id, 'TICKET_VIEWED_FIRST_TIME', null, null);
+    }
+  };
+
+  // Passo 1: clique num ticket em Backlog → gate de aceite. Demais → abre os detalhes (passo 2).
+  const requestOpenTicket = (t) => {
+    const canManage = user?.role === 'dev' || user?.role === 'admin';
+    if (!canManage) return; // usuários comuns não abrem os detalhes
+    if (t.status === 'backlog') { setAcceptGate(t); return; }
+    openTicketDetails(t);
+  };
+
+  // Aceite (passo 1 → 2): move pra Análise e ABRE os detalhes (onde define tipo/prazo/compartilhar)
+  const aceitarDoGate = (t) => {
+    const atualizado = { ...t, status: 'analise', responsible: t.responsible || user.name };
+    updateTicketDetails(t.id, { status: 'analise', responsible: t.responsible || user.name });
+    setAcceptGate(null);
+    openTicketDetails(atualizado);
+  };
+
+  const recusarDoGate = (t) => {
+    updateTicketDetails(t.id, { status: 'negado' });
+    toast.success('Ticket recusado.');
+    setAcceptGate(null);
+  };
+
   const visibleTickets = (user?.role === 'dev')
-    ? tickets.filter(t => 
-        t.responsible === user.name || 
+    ? tickets.filter(t =>
+        t.responsible === user.name ||
         t.created_by === user.id ||
         (Array.isArray(t.shared_with) && t.shared_with.includes(user.id))
       )
@@ -811,8 +1135,19 @@ export default function App() {
     t.id.toString().toLowerCase().includes(search.toLowerCase())
   );
 
-  // Auth Screen centralizada
-  if (!user && hash === '#/login') {
+  // No Kanban, quem ENVIA (criou) não vê o ticket — só quem RECEBE (responsável) ou com quem foi compartilhado.
+  // Quem enviou continua vendo o ticket na aba Tickets. (admin vê tudo)
+  const kanbanTickets = (user?.role === 'dev')
+    ? filteredTickets.filter(t => t.responsible === user.name || (Array.isArray(t.shared_with) && t.shared_with.includes(user.id)))
+    : filteredTickets;
+
+  // Rota pública de auto-registro por link (escapa do login obrigatório)
+  if (!user && hash.startsWith('#/registro/')) {
+    return <RegistroScreen hash={hash} theme={theme} />;
+  }
+
+  // Auth Screen centralizada — login OBRIGATÓRIO: sem sessão, ninguém entra nem cria ticket
+  if (!user) {
     return (
       <div data-theme={theme} className="login-page">
         <div style={{ position: 'fixed', top: '2rem', right: '2rem' }}>
@@ -861,52 +1196,41 @@ export default function App() {
             >
               {view === 'tickets' ? (
                 <UserDashboard
-                  tickets={filteredTickets}
+                  tickets={user?.role === 'admin' ? filteredTickets : filteredTickets.filter(t => t.created_by === user?.id)}
                   isLoading={loading}
                   onOpenModal={() => setIsModalOpen(true)}
                   search={search}
                   setSearch={setSearch}
                   onDelete={deleteTicket}
-                  onTicketClick={async (t) => {
-                    // Apenas DEVs e ADMINs podem ver detalhes e anexos
-                    if (user?.role === 'dev' || user?.role === 'admin') {
-                      const { data } = await api.from('tickets').select('attachments').eq('id', t.id).single();
-                      setViewingTicket({ ...t, attachments: data?.attachments || [] });
-                    }
-                  }}
+                  onTicketClick={requestOpenTicket}
                   user={user}
                   systems={systemsList}
+                  setores={setoresList}
                 />
               ) : view === 'users' ? (
-                <UsersView user={user} onDeleteUser={handleDeleteUser} fetchUsers={fetchUsersList} allUsers={allUsers} />
-              ) : view === 'systems' ? (
-                <SystemsView user={user} systems={systemsList} onUpdate={async () => {
-                  const { data } = await api.from('systems').select('*');
-                  if (data) setSystemsList(data);
+                <UsersView user={user} onDeleteUser={handleDeleteUser} fetchUsers={fetchUsersList} allUsers={allUsers} setores={setoresList} />
+              ) : view === 'setores' ? (
+                <SetoresView user={user} setores={setoresList} systems={systemsList} onUpdate={async () => {
+                  const { data: setData } = await api.from('setores').select('*').order('name');
+                  setSetoresList(setData || []);
+                  const { data: sysData } = await api.from('systems').select('*');
+                  if (sysData) setSystemsList(sysData);
                 }} />
               ) : view === 'kanban' ? (
                 <DevKanban
-                  tickets={filteredTickets}
+                  tickets={kanbanTickets}
                   isLoading={loading}
                   onUpdateStatus={updateTicketStatus}
                   onUpdateUrgency={(tid, urg) => updateTicketDetails(tid, { urgency: urg })}
                   user={user}
                   allUsers={allUsers}
                   systems={systemsList}
-                  onTicketClick={async (t) => {
-                    // Busca os anexos pesados apenas sob demanda
-                    const { data } = await api.from('tickets').select('attachments').eq('id', t.id).single();
-                    const fullTicket = { ...t, attachments: data?.attachments || [] };
-                    
-                    setViewingTicket(fullTicket);
-                    playSound('open');
-                    if (user && (user.role === 'dev' || user.role === 'admin')) {
-                      await logAction(t.id, 'TICKET_VIEWED_FIRST_TIME', null, null);
-                    }
-                  }}
+                  setores={setoresList}
+                  onOpenModal={() => setIsModalOpen(true)}
+                  onTicketClick={requestOpenTicket}
                 />
               ) : view === 'analytics' ? (
-                <AnalyticsDashboard tickets={filteredTickets} />
+                <AnalyticsDashboard tickets={filteredTickets} setores={setoresList} />
               ) : view === 'logs' ? (
                 <LogsView />
               ) : view === 'profile' ? (
@@ -929,6 +1253,8 @@ export default function App() {
             }}
             onSubmit={addTicket}
             systems={systemsList}
+            setores={setoresList}
+            user={user}
           />
         )}
         {viewingTicket && (
@@ -940,11 +1266,23 @@ export default function App() {
             }}
             onUpdate={updateTicketDetails}
             systems={systemsList}
+            setores={setoresList}
             allUsers={allUsers}
             user={user}
           />
         )}
       </AnimatePresence>
+
+      {/* Gates FORA do AnimatePresence: portais desmontam na hora (evita overlay preso ao trocar de modal) */}
+      {acceptGate && (
+        <AcceptGateModal
+          ticket={acceptGate}
+          onAccept={() => aceitarDoGate(acceptGate)}
+          onReject={() => recusarDoGate(acceptGate)}
+          onViewDetails={() => { const t = acceptGate; setAcceptGate(null); openTicketDetails(t); }}
+          onClose={() => setAcceptGate(null)}
+        />
+      )}
 
       <ConfirmationModal config={confirmConfig} onClose={closeConfirm} />
     </>
@@ -952,7 +1290,76 @@ export default function App() {
 }
 
 // --- Dashboard do Usuário ---
-function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, onTicketClick, user, systems, isLoading }) {
+// Data de entrega (DATE do MySQL vem como ISO) → 'YYYY-MM-DD' local p/ <input type="date">
+function toDateInput(d) {
+  if (!d) return '';
+  const dt = new Date(d);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+}
+
+// Ticket vencido: passou da data de entrega e ainda está aberto (não resolvido/negado/repassado)
+function isOverdue(ticket) {
+  const fechados = ['resolvido', 'negado', 'repassado'];
+  if (!ticket.delivery_date || fechados.includes(ticket.status)) return false;
+  const due = new Date(ticket.delivery_date);
+  due.setHours(23, 59, 59, 999); // vence só no fim do dia da entrega
+  return new Date() > due;
+}
+
+// Setor de origem do ticket (de quem abriu)
+function ticketOrigem(ticket, setores = []) {
+  return setores.find(s => s.id == ticket.origin_setor_id)?.name || '';
+}
+
+// Rótulo de destino do ticket: "Setor" (setor sem categorias) ou "Setor › Categoria"
+function ticketDestino(ticket, setores = [], systems = []) {
+  const setor = setores.find(s => s.id == ticket.setor_id);
+  const sistema = ticket.platform ? systems.find(p => p.id == ticket.platform) : null;
+  const setorNome = setor?.name || (ticket.setor_id ? `#${ticket.setor_id}` : '');
+  const sistemaNome = sistema?.name || (ticket.platform || '');
+  if (setorNome && sistemaNome) return `${setorNome} › ${sistemaNome}`;
+  return setorNome || sistemaNome || '—';
+}
+
+// Badge do tipo do ticket (definido na Análise): Bug / Melhoria
+function TipoBadge({ ticket, size = '0.6rem' }) {
+  const tt = TICKET_TYPES.find(x => x.id === ticket.ticket_type);
+  if (!tt) return null;
+  return (
+    <span style={{ fontSize: size, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.03em', padding: '2px 7px', borderRadius: '5px', background: `${tt.color}22`, color: tt.color, border: `1px solid ${tt.color}55`, whiteSpace: 'nowrap' }}>
+      {tt.name}
+    </span>
+  );
+}
+
+// --- Skeletons (pré-visualização com shimmer enquanto carrega) ---
+function Skeleton({ w = '100%', h = 14, r = 8, style }) {
+  return <div className="skeleton" style={{ width: w, height: h, borderRadius: r, flexShrink: 0, ...style }} />;
+}
+function SkeletonTicketRow() {
+  return (
+    <div className="glass ticket-card" style={{ padding: '1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'center' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'center' }}>
+          <Skeleton w={34} h={12} /><Skeleton w={44} h={10} />
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '9px' }}>
+          <Skeleton w={210} h={16} /><Skeleton w={150} h={11} />
+        </div>
+      </div>
+      <Skeleton w={120} h={30} r={8} />
+    </div>
+  );
+}
+function SkeletonKanbanCard() {
+  return (
+    <div className="glass kanban-card" style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '9px' }}>
+      <Skeleton w={40} h={10} /><Skeleton w="85%" h={14} /><Skeleton w="55%" h={10} />
+    </div>
+  );
+}
+
+function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, onTicketClick, user, systems, setores, isLoading }) {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
   useEffect(() => {
@@ -984,8 +1391,8 @@ function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, onTi
 
       <div className="tickets-list-container">
         {isLoading ? (
-          <div className="glass" style={{ padding: '2rem', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-            <LoadingSpinner label="Sincronizando tickets..." />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            {Array.from({ length: 5 }).map((_, i) => <SkeletonTicketRow key={i} />)}
           </div>
         ) : tickets.length === 0 ? (
           <div className="glass" style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>
@@ -1003,7 +1410,7 @@ function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, onTi
                 alignItems: 'center', 
                 justifyContent: 'space-between', 
                 cursor: (user?.role === 'admin' || user?.role === 'dev') ? 'pointer' : 'default',
-                borderLeft: ticket.created_by !== user?.id ? '4px solid var(--primary)' : 'none'
+                borderLeft: isOverdue(ticket) ? '4px solid #ef4444' : (ticket.created_by !== user?.id ? '4px solid var(--primary)' : 'none')
               }}
               onClick={() => onTicketClick(ticket)}
             >
@@ -1023,11 +1430,16 @@ function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, onTi
                   </div>
                   <div style={{ display: 'flex', gap: '12px' }}>
                     <div className="card-info-row">
-                      <LayoutDashboard size={12} /> {systems.find(p => p.id == ticket.platform)?.name || ticket.platform}
+                      <LayoutDashboard size={12} /> {ticketOrigem(ticket, setores) ? `${ticketOrigem(ticket, setores)} → ` : ''}{ticketDestino(ticket, setores, systems)}
                     </div>
                     <div className="card-info-row">
                       <Clock size={12} /> {new Date(ticket.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                     </div>
+                    {ticket.delivery_date && (
+                      <div className="card-info-row" style={{ color: isOverdue(ticket) ? '#ef4444' : undefined, fontWeight: isOverdue(ticket) ? 700 : undefined }}>
+                        <Calendar size={12} /> Entrega {new Date(ticket.delivery_date).toLocaleDateString('pt-BR')}{isOverdue(ticket) ? ' • vencido' : ''}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1065,14 +1477,137 @@ function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, onTi
   );
 }
 
+// Ordenação por coluna do Kanban
+const SORT_OPTIONS = [
+  { key: 'chegada', label: 'Data de chegada' },
+  { key: 'entrega', label: 'Data de entrega' },
+  { key: 'alfabetica', label: 'Alfabética (título)' },
+  { key: 'urgencia', label: 'Urgência' },
+];
+
+function sortColumn(arr, key, dir = 'asc') {
+  if (!key) return arr; // sem ordenação → mantém a ordem padrão (mais recente)
+  const sign = dir === 'desc' ? -1 : 1;
+  const a = [...arr];
+  a.sort((x, y) => {
+    if (key === 'entrega') {
+      const nx = !x.delivery_date, ny = !y.delivery_date;
+      if (nx && ny) return 0;
+      if (nx) return 1;   // sem prazo sempre por último, em qualquer direção
+      if (ny) return -1;
+      return sign * (new Date(x.delivery_date) - new Date(y.delivery_date));
+    }
+    if (key === 'chegada') return sign * (new Date(x.created_at) - new Date(y.created_at));
+    if (key === 'alfabetica') return sign * (x.title || '').localeCompare(y.title || '');
+    if (key === 'urgencia') { const r = { leve: 1, moderado: 2, grave: 3 }; return sign * ((r[x.urgency] ?? 0) - (r[y.urgency] ?? 0)); }
+    return 0;
+  });
+  return a;
+}
+
+// Dica secundária por tipo de ordenação (usada na prévia em texto)
+function sortHint(t, key) {
+  if (key === 'entrega') return t.delivery_date ? new Date(t.delivery_date).toLocaleDateString('pt-BR') : 'sem prazo';
+  if (key === 'chegada') return new Date(t.created_at).toLocaleDateString('pt-BR');
+  if (key === 'urgencia') return URGENCY_LEVELS.find(u => u.id === t.urgency)?.name || t.urgency;
+  return '';
+}
+
+function ColumnSortModal({ columnName, tickets, initialKey, initialDir, onApply, onClose }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const [key, setKey] = useState(initialKey || 'chegada');
+  const [dir, setDir] = useState(initialDir || 'asc');
+  if (!mounted) return null;
+  const ordered = sortColumn(tickets, key, dir);
+  const preview = ordered.slice(0, 6);
+  return createPortal(
+    <div className="overlay" style={{ alignItems: 'center', padding: '1rem' }} onClick={onClose}>
+      <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="glass modal" style={{ width: '440px', maxWidth: '94vw', padding: '1.75rem' }} onClick={e => e.stopPropagation()}>
+        {/* Topo: qual coluna está sendo ordenada */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.25rem' }}>
+          <div>
+            <span style={{ fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 800, letterSpacing: '0.05em' }}>Ordenar coluna</span>
+            <h3 style={{ margin: '2px 0 0', fontSize: '1.3rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <ArrowUpDown size={18} color="var(--primary)" /> {columnName}
+            </h3>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={20} /></button>
+        </div>
+
+        {/* Selects: tipo de ordem + direção */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1.25rem' }}>
+          <div className="form-group" style={{ margin: 0 }}>
+            <label style={{ fontSize: '0.75rem' }}>Ordenar por</label>
+            <select value={key} onChange={e => setKey(e.target.value)}>
+              {SORT_OPTIONS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+            </select>
+          </div>
+          <div className="form-group" style={{ margin: 0 }}>
+            <label style={{ fontSize: '0.75rem' }}>Direção</label>
+            <select value={dir} onChange={e => setDir(e.target.value)}>
+              <option value="asc">Crescente</option>
+              <option value="desc">Decrescente</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Prévia em texto de como a coluna vai ficar */}
+        <div style={{ marginBottom: '1.5rem' }}>
+          <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 700, marginBottom: '8px' }}>Prévia da coluna</div>
+          {preview.length === 0 ? (
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>Sem tickets nesta coluna.</div>
+          ) : (
+            <ol style={{ margin: 0, paddingLeft: '1.4rem', display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '0.85rem', color: 'var(--text-main)' }}>
+              {preview.map(t => (
+                <li key={t.id}>
+                  <span style={{ fontWeight: 600 }}>{t.title}</span>
+                  {sortHint(t, key) && <span style={{ color: 'var(--text-muted)' }}> — {sortHint(t, key)}</span>}
+                </li>
+              ))}
+              {ordered.length > preview.length && <li style={{ listStyle: 'none', marginLeft: '-1.4rem', color: 'var(--text-muted)' }}>… +{ordered.length - preview.length} outros</li>}
+            </ol>
+          )}
+        </div>
+
+        <button className="btn btn-primary" style={{ width: '100%' }} onClick={() => onApply(key, dir)}>Aplicar ordenação</button>
+      </motion.div>
+    </div>,
+    document.body
+  );
+}
+
 // --- Kanban do Desenvolvedor ---
-function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketClick, systems, allUsers, isLoading }) {
-  const [draggedTicket, setDraggedTicket] = useState(null);
-  const [dropTarget, setDropTarget] = useState(null);
+function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketClick, systems, setores, allUsers, isLoading, onOpenModal }) {
+  const [sortModal, setSortModal] = useState(null);   // id da coluna com modal de ordenação aberto
+  const [columnSort, setColumnSort] = useState({});   // { [columnId]: sortKey }
   const [filterSearch, setFilterSearch] = useState('');
   const [filterPlatform, setFilterPlatform] = useState('');
   const [filterUrgency, setFilterUrgency] = useState('');
   const [filterResponsible, setFilterResponsible] = useState('');
+  const [draggedTicket, setDraggedTicket] = useState(null);
+  const [dropTarget, setDropTarget] = useState(null);
+
+  // Drag-and-drop SÓ nas etapas finais (Backlog/Análise seguem o fluxo por passos)
+  const DRAG_STAGES = ['resolvendo', 'em_teste', 'resolvido'];
+  const handleDragStart = (e, ticket) => {
+    if (!DRAG_STAGES.includes(ticket.status)) { e.preventDefault(); return; }
+    setDraggedTicket(ticket);
+    e.dataTransfer.setData('ticketId', ticket.id);
+  };
+  const handleDragOver = (e, columnId) => {
+    if (!draggedTicket || !DRAG_STAGES.includes(columnId)) return;
+    e.preventDefault();
+    setDropTarget(columnId);
+  };
+  const handleDrop = (e, columnId) => {
+    if (!draggedTicket || !DRAG_STAGES.includes(columnId)) return;
+    e.preventDefault();
+    const ticketId = e.dataTransfer.getData('ticketId');
+    if (ticketId && draggedTicket.status !== columnId) onUpdateStatus(ticketId, columnId);
+    setDraggedTicket(null);
+    setDropTarget(null);
+  };
 
   const hexToRgb = (hex) => {
     if (!hex) return '0,0,0';
@@ -1080,25 +1615,6 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
     return result ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` : '0,0,0';
   };
 
-  const handleDragStart = (e, ticket) => {
-    setDraggedTicket(ticket);
-    e.dataTransfer.setData('ticketId', ticket.id);
-  };
-
-  const handleDragOver = (e, columnId) => {
-    e.preventDefault();
-    setDropTarget(columnId);
-  };
-
-  const handleDrop = (e, columnId) => {
-    e.preventDefault();
-    const ticketId = e.dataTransfer.getData('ticketId');
-    if (ticketId && draggedTicket.status !== columnId) {
-      onUpdateStatus(ticketId, columnId);
-    }
-    setDraggedTicket(null);
-    setDropTarget(null);
-  };
 
   let visibleTickets = tickets;
   if (filterSearch) {
@@ -1129,7 +1645,7 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
           />
         </div>
         <select style={{ flex: '0 0 160px', margin: 0 }} value={filterPlatform} onChange={e => setFilterPlatform(e.target.value)}>
-          <option value="">Sistemas</option>
+          <option value="">Sub-Setores</option>
           {systems.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
         <select style={{ flex: '0 0 160px', margin: 0 }} value={filterUrgency} onChange={e => setFilterUrgency(e.target.value)}>
@@ -1144,12 +1660,20 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
 
       <div className="kanban-board-container" style={{ display: 'flex', gap: '1rem', flex: 1, overflowX: 'auto', paddingBottom: '1rem' }}>
         {isLoading ? (
-          <div className="glass" style={{ width: '100%', padding: '4rem', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-            <LoadingSpinner label="Organizando quadro..." />
-          </div>
+          DEV_STATUS.map(column => (
+            <div key={column.id} className="kanban-column" style={{ minWidth: '300px', background: 'rgba(0,0,0,0.02)', borderRadius: '12px', padding: '1rem', display: 'flex', flexDirection: 'column' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem' }}>
+                <Skeleton w={90} h={12} /><Skeleton w={18} h={12} r={6} />
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <SkeletonKanbanCard /><SkeletonKanbanCard />
+              </div>
+            </div>
+          ))
         ) : (
           DEV_STATUS.map(column => {
-            const columnTickets = visibleTickets.filter(t => t.status === column.id);
+            const cs = columnSort[column.id];
+            const columnTickets = sortColumn(visibleTickets.filter(t => t.status === column.id), cs?.key, cs?.dir);
             const isTarget = dropTarget === column.id;
 
             return (
@@ -1160,29 +1684,41 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
                 onDrop={(e) => handleDrop(e, column.id)}
                 style={{ minWidth: '300px', background: 'rgba(0,0,0,0.02)', borderRadius: '12px', padding: '1rem', display: 'flex', flexDirection: 'column' }}
               >
-                <h3 style={{ fontSize: '0.85rem', fontWeight: '700', textTransform: 'uppercase', marginBottom: '1rem', display: 'flex', justifyContent: 'space-between' }}>
+                <h3 style={{ fontSize: '0.85rem', fontWeight: '700', textTransform: 'uppercase', marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   {column.name}
-                  <span>{columnTickets.length}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span>{columnTickets.length}</span>
+                    <button
+                      className="icon-btn"
+                      title="Ordenar coluna"
+                      onClick={(e) => { e.stopPropagation(); playSound('click'); setSortModal(column.id); }}
+                      style={{ display: 'flex', alignItems: 'center', padding: '2px', color: columnSort[column.id] ? 'var(--primary)' : 'var(--text-muted)' }}
+                    >
+                      <ArrowUpDown size={14} />
+                    </button>
+                  </div>
                 </h3>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <div className="hide-scrollbar" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: '4px', maxHeight: 'calc(100vh - 260px)' }}>
                   {columnTickets.map(ticket => {
                     const urgencyColor = URGENCY_LEVELS.find(u => u.id === ticket.urgency)?.color || 'transparent';
                     const responsibleUser = allUsers.find(u => u.name === ticket.responsible);
+                    const overdue = isOverdue(ticket);
+                    const canDrag = DRAG_STAGES.includes(ticket.status);
 
                     return (
                       <motion.div
                         layout
                         key={ticket.id}
-                        draggable
+                        draggable={canDrag}
                         onDragStart={(e) => handleDragStart(e, ticket)}
                         onClick={() => onTicketClick(ticket)}
                         className={`glass kanban-card ${ticket.created_by !== user?.id && Array.isArray(ticket.shared_with) && ticket.shared_with.includes(user?.id) ? 'shared-card' : ''}`}
                         style={{
                           padding: '1rem',
-                          cursor: 'grab',
-                          borderLeft: `5px solid ${urgencyColor}`,
-                          boxShadow: ticket.created_by !== user?.id ? '0 0 0 2px var(--primary)40, 0 4px 12px rgba(0,0,0,0.1)' : 'none',
+                          cursor: canDrag ? 'grab' : 'pointer',
+                          borderLeft: `5px solid ${overdue ? '#ef4444' : urgencyColor}`,
+                          boxShadow: overdue ? '0 0 0 2px #ef4444, 0 4px 12px rgba(239,68,68,0.15)' : (ticket.created_by !== user?.id ? '0 0 0 2px var(--primary)40, 0 4px 12px rgba(0,0,0,0.1)' : 'none'),
                           position: 'relative'
                         }}
                       >
@@ -1194,10 +1730,16 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
                                 Compartilhado
                               </span>
                             )}
-                            <span style={{ color: 'var(--text-muted)', fontWeight: '600' }}>{systems.find(p => p.id == ticket.platform)?.name || ticket.platform}</span>
+                            <span style={{ color: 'var(--text-muted)', fontWeight: '600' }}>{ticketOrigem(ticket, setores) ? `${ticketOrigem(ticket, setores)} → ` : ''}{ticketDestino(ticket, setores, systems)}</span>
                           </div>
                         </div>
                         <h4 style={{ fontSize: '0.9rem', fontWeight: '600', marginBottom: '8px' }}>{ticket.title}</h4>
+                        {ticket.ticket_type && <div style={{ marginBottom: '8px' }}><TipoBadge ticket={ticket} /></div>}
+                        {ticket.delivery_date && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.65rem', fontWeight: 700, marginBottom: '8px', color: overdue ? '#ef4444' : 'var(--text-muted)' }}>
+                            <Calendar size={12} /> Entrega {new Date(ticket.delivery_date).toLocaleDateString('pt-BR')}{overdue ? ' • vencido' : ''}
+                          </div>
+                        )}
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                           <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{new Date(ticket.created_at).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
 
@@ -1219,24 +1761,145 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
           })
         )}
       </div>
+
+      <AnimatePresence>
+        {sortModal && (
+          <ColumnSortModal
+            columnName={DEV_STATUS.find(c => c.id === sortModal)?.name}
+            tickets={visibleTickets.filter(t => t.status === sortModal)}
+            initialKey={columnSort[sortModal]?.key}
+            initialDir={columnSort[sortModal]?.dir}
+            onApply={(key, dir) => { setColumnSort(prev => ({ ...prev, [sortModal]: { key, dir } })); setSortModal(null); playSound('success'); }}
+            onClose={() => setSortModal(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
 
 // --- Modal de Criação ---
-function TicketModal({ onClose, onSubmit, systems }) {
+// --- Gate de aceite: pergunta se aceita ANTES de abrir os detalhes (aceite → Análise) ---
+function AcceptGateModal({ ticket, onAccept, onReject, onViewDetails, onClose }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return null;
+  return createPortal(
+    <div className="overlay" style={{ alignItems: 'center', padding: '1rem' }} onClick={onClose}>
+      <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="glass modal" style={{ width: '440px', maxWidth: '94vw', padding: '1.75rem' }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
+          <div>
+            <span style={{ fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 800, letterSpacing: '0.05em' }}>Aceitar ticket · #{ticket.id}</span>
+            <h3 style={{ margin: '2px 0 0', fontSize: '1.2rem', fontWeight: 800 }}>{ticket.title}</h3>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={20} /></button>
+        </div>
+        {ticket.description && (
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-main)', margin: '0 0 1rem', lineHeight: 1.5, background: 'rgba(0,0,0,0.03)', border: '1px solid var(--glass-border)', borderRadius: '10px', padding: '10px 12px' }}>
+            {ticket.description.length > 160 ? ticket.description.slice(0, 160) + '…' : ticket.description}
+          </p>
+        )}
+        <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', margin: '0 0 1.5rem', lineHeight: 1.5 }}>
+          Você aceita atender este ticket? Ao aceitar, você verá os detalhes completos para classificar e definir o prazo.
+        </p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <button className="btn btn-primary" style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }} onClick={onAccept}>
+            <CheckSquare size={16} /> Aceitar ticket
+          </button>
+          <button className="btn btn-ghost" style={{ width: '100%' }} onClick={onViewDetails}>Ver detalhes primeiro</button>
+          <button className="btn btn-ghost" style={{ width: '100%', color: '#ef4444' }} onClick={onReject}>Recusar ticket</button>
+        </div>
+      </motion.div>
+    </div>,
+    document.body
+  );
+}
+
+// --- Gate de análise: define tipo (Bug/Melhoria) + prazo e envia pra Resolvendo ---
+function AnaliseGateModal({ ticket, onConfirm, onViewDetails, onClose }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const [tipo, setTipo] = useState(ticket.ticket_type || '');
+  const [date, setDate] = useState(toDateInput(ticket.delivery_date));
+  const hoje = toDateInput(new Date());
+  if (!mounted) return null;
+  return createPortal(
+    <div className="overlay" style={{ alignItems: 'center', padding: '1rem' }} onClick={onClose}>
+      <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="glass modal" style={{ width: '440px', maxWidth: '94vw', padding: '1.75rem' }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
+          <div>
+            <span style={{ fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 800, letterSpacing: '0.05em' }}>Análise · #{ticket.id}</span>
+            <h3 style={{ margin: '2px 0 0', fontSize: '1.2rem', fontWeight: 800 }}>{ticket.title}</h3>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={20} /></button>
+        </div>
+        <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', margin: '0 0 1.25rem', lineHeight: 1.5 }}>
+          Classifique o ticket e defina o prazo de resolução para enviá-lo a <strong style={{ color: 'var(--text-main)' }}>Resolvendo</strong>.
+        </p>
+        <div className="form-group" style={{ marginBottom: '1rem' }}>
+          <label style={{ fontSize: '0.75rem' }}>Tipo do ticket</label>
+          <select value={tipo} onChange={e => setTipo(e.target.value)} autoFocus>
+            <option value="">Selecione...</option>
+            {TICKET_TYPES.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
+        </div>
+        <div className="form-group" style={{ marginBottom: '1.5rem' }}>
+          <label style={{ fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '6px' }}><Calendar size={14} /> Prazo de resolução</label>
+          <input type="date" min={hoje} value={date} onChange={e => setDate(e.target.value)} />
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <button className="btn btn-primary" style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }} onClick={() => {
+            if (!tipo) { toast.error('Selecione o tipo do ticket.'); return; }
+            if (!date) { toast.error('Informe o prazo de resolução.'); return; }
+            onConfirm(tipo, date);
+          }}>
+            <ArrowRight size={16} /> Enviar para Resolvendo
+          </button>
+          <button className="btn btn-ghost" style={{ width: '100%' }} onClick={onViewDetails}>Ver detalhes</button>
+        </div>
+      </motion.div>
+    </div>,
+    document.body
+  );
+}
+
+// --- Modal de Criação ---
+function TicketModal({ onClose, onSubmit, systems, setores = [], user }) {
+  // Destino só pode ser OUTRO setor: exclui o setor de origem (o de quem abre)
+  const setoresDestino = setores.filter(s => s.id != user?.setor_id);
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
   const [formData, setFormData] = useState({
     title: '',
     description: '',
+    setor: '',
     platform: '',
     responsible: '',
     files: []
   });
   const [previews, setPreviews] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Sistemas do setor escolhido (ramificações). Vazio = setor sem sistemas (ex: Financeiro).
+  const setorSystems = formData.setor ? systems.filter(s => s.setor_id == formData.setor) : [];
+  const setorAtual = setores.find(s => s.id == formData.setor);
+  // Responsáveis disponíveis: do sistema (se o setor ramifica) ou da equipe do setor.
+  const respOptions = formData.platform
+    ? (systems.find(p => p.id == formData.platform)?.primary_responsibles || [])
+    : (setorSystems.length === 0 ? (setorAtual?.primary_responsibles || []) : []);
+
+  const handleSetorChange = (setorId) => {
+    const proximosSistemas = systems.filter(s => s.setor_id == setorId);
+    const setor = setores.find(s => s.id == setorId);
+    setFormData({
+      ...formData,
+      setor: setorId,
+      platform: '',
+      // setor sem sistemas: já sugere o 1º da equipe; com sistemas: espera escolher o sistema
+      responsible: proximosSistemas.length === 0 ? (setor?.primary_responsibles?.[0] || '') : ''
+    });
+  };
 
   const handlePlatformChange = (pId) => {
     const platform = systems.find(p => p.id == pId);
@@ -1281,7 +1944,8 @@ function TicketModal({ onClose, onSubmit, systems }) {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!formData.title || !formData.description || !formData.platform || !formData.responsible) {
+    const precisaSistema = setorSystems.length > 0;
+    if (!formData.title || !formData.description || !formData.setor || !formData.responsible || (precisaSistema && !formData.platform)) {
       toast.error('Preencha os campos obrigatórios.');
       return;
     }
@@ -1316,22 +1980,34 @@ function TicketModal({ onClose, onSubmit, systems }) {
             <textarea rows="4" placeholder="Detalhes..." value={formData.description} onChange={e => setFormData({ ...formData, description: e.target.value })}></textarea>
           </div>
 
+          <div className="form-group">
+            <label>Setor</label>
+            <select value={formData.setor} onChange={e => handleSetorChange(e.target.value)}>
+              <option value="">Selecione o setor...</option>
+              {setoresDestino.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
+
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-            <div className="form-group">
-              <label>Plataforma</label>
-              <select value={formData.platform} onChange={e => handlePlatformChange(e.target.value)}>
-                <option value="">Selecione...</option>
-                {systems.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
-            </div>
+            {setorSystems.length > 0 && (
+              <div className="form-group">
+                <label>Sub-Setor</label>
+                <select value={formData.platform} onChange={e => handlePlatformChange(e.target.value)}>
+                  <option value="">Selecione...</option>
+                  {setorSystems.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </div>
+            )}
 
             <div className="form-group">
               <label>Responsável</label>
-              <select value={formData.responsible} onChange={e => setFormData({ ...formData, responsible: e.target.value })} disabled={!formData.platform}>
+              <select
+                value={formData.responsible}
+                onChange={e => setFormData({ ...formData, responsible: e.target.value })}
+                disabled={!formData.setor || (setorSystems.length > 0 && !formData.platform)}
+              >
                 <option value="">Selecione...</option>
-                {formData.platform && systems.find(p => p.id == formData.platform)?.primary_responsibles?.map(r => (
-                  <option key={r} value={r}>{r}</option>
-                ))}
+                {respOptions.map(r => <option key={r} value={r}>{r}</option>)}
               </select>
             </div>
           </div>
@@ -1378,20 +2054,58 @@ function TicketModal({ onClose, onSubmit, systems }) {
   );
 }
 
-function TicketDetailsModal({ ticket, onClose, onUpdate, systems, allUsers, user }) {
+function TicketDetailsModal({ ticket, onClose, onUpdate, systems, setores = [], allUsers, user }) {
   const [urgency, setUrgency] = useState(ticket.urgency || '');
+  const [tipo, setTipo] = useState(ticket.ticket_type || '');
+  const [statusSel, setStatusSel] = useState(ticket.status);
   const [responsible, setResponsible] = useState(ticket.responsible || '');
   const [isCustomResp, setIsCustomResp] = useState(false);
   const [devNotes, setDevNotes] = useState(ticket.dev_notes || '');
   const [sharedWith, setSharedWith] = useState(Array.isArray(ticket.shared_with) ? ticket.shared_with : []);
+  const [shareOn, setShareOn] = useState(Array.isArray(ticket.shared_with) && ticket.shared_with.length > 0);
   const [viewingMedia, setViewingMedia] = useState(null);
+  const [deliveryDate, setDeliveryDate] = useState(toDateInput(ticket.delivery_date));
+  // Ticket vencido já abre pedindo nova data (requisito: "solicitar outra data ao vencer")
+  const [rescheduling, setRescheduling] = useState(isOverdue(ticket));
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
   const platform = systems.find(p => p.id == ticket.platform);
-  const availableDevs = platform?.primary_responsibles || [];
+  const setorDoTicket = setores.find(s => s.id == ticket.setor_id);
+  // Responsáveis candidatos: do sistema (setor ramificado) ou da equipe do setor.
+  const availableDevs = platform?.primary_responsibles || setorDoTicket?.primary_responsibles || [];
 
   const creator = allUsers.find(u => u.id === ticket.created_by);
+
+  // Compartilhamento: colegas do MESMO setor do responsável (aparecem no Kanban se compartilhado)
+  const respUser = allUsers.find(u => u.name === ticket.responsible);
+  const shareCandidates = allUsers.filter(u =>
+    respUser?.setor_id != null && String(u.setor_id) === String(respUser.setor_id) &&
+    u.name !== ticket.responsible && !sharedWith.includes(u.id)
+  );
+
+  // Só responsável/dev (e admin) aceita e define/reagenda a entrega
+  const canManage = user?.role === 'dev' || user?.role === 'admin';
+  const hoje = toDateInput(new Date());
+  const vencido = isOverdue(ticket);
+
+  const handleAccept = () => {
+    if (!deliveryDate) { toast.error('Informe a data de entrega para aceitar.'); return; }
+    onUpdate(ticket.id, {
+      status: 'resolvendo',
+      responsible: responsible || user.name,
+      delivery_date: deliveryDate
+    });
+    playSound('success');
+    onClose();
+  };
+
+  const handleReschedule = () => {
+    if (!deliveryDate) { toast.error('Informe a nova data de entrega.'); return; }
+    onUpdate(ticket.id, { delivery_date: deliveryDate });
+    playSound('success');
+    onClose();
+  };
 
   if (!mounted) return null;
 
@@ -1483,19 +2197,74 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, allUsers, user
               <div className="modal-details-sidebar">
                 <div>
                   <h3 style={{ fontSize: '0.8rem', fontWeight: '700', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '1rem' }}>Ações de Membro</h3>
-                  <div className="form-group" style={{ marginBottom: '1rem' }}>
-                    <label style={{ fontSize: '0.75rem' }}>Responsável</label>
-                    <select value={responsible} onChange={e => setResponsible(e.target.value)} style={{ padding: '8px', fontSize: '0.85rem' }}>
-                      <option value="">Livre</option>
-                      {availableDevs.map(dev => <option key={dev} value={dev}>{dev}</option>)}
-                    </select>
+
+                  {/* Prazo de Entrega — aceite (backlog) / prazo + reagendamento ao vencer */}
+                  <div className="form-group" style={{ marginBottom: '1.5rem', padding: '12px', borderRadius: '12px', border: `1px solid ${vencido ? '#ef4444' : 'var(--glass-border)'}`, background: vencido ? 'rgba(239,68,68,0.06)' : 'rgba(0,0,0,0.02)' }}>
+                    <label style={{ fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '6px', color: vencido ? '#ef4444' : 'var(--text-main)', fontWeight: 700, marginBottom: '8px' }}>
+                      <Calendar size={14} /> Data de Entrega
+                      {vencido && <span style={{ marginLeft: 'auto', fontSize: '0.65rem', textTransform: 'uppercase', fontWeight: 800 }}>Vencido</span>}
+                    </label>
+
+                    {ticket.status === 'backlog' ? (
+                      canManage ? (
+                        <>
+                          <input type="date" min={hoje} value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} style={{ fontSize: '0.85rem', padding: '8px' }} />
+                          <button className="btn btn-primary" style={{ width: '100%', marginTop: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }} onClick={handleAccept}>
+                            <CheckSquare size={16} /> Aceitar ticket
+                          </button>
+                        </>
+                      ) : (
+                        <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic', margin: 0 }}>Aguardando aceite do responsável.</p>
+                      )
+                    ) : (
+                      <>
+                        <div style={{ fontSize: '0.9rem', fontWeight: 700, color: vencido ? '#ef4444' : (ticket.delivery_date ? 'var(--text-main)' : 'var(--text-muted)') }}>
+                          {ticket.delivery_date
+                            ? `Prazo de entrega: ${new Date(ticket.delivery_date).toLocaleDateString('pt-BR')}`
+                            : 'Nenhum prazo de entrega definido — informe abaixo.'}
+                        </div>
+                        {vencido && <p style={{ fontSize: '0.75rem', color: '#ef4444', margin: '4px 0 0' }}>Entrega vencida — defina uma nova data.</p>}
+                        {canManage && (rescheduling || vencido || !ticket.delivery_date) ? (
+                          <div style={{ marginTop: '8px' }}>
+                            <input type="date" min={hoje} value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} style={{ fontSize: '0.85rem', padding: '8px' }} />
+                            <button className="btn btn-primary" style={{ width: '100%', marginTop: '8px', ...(vencido ? { background: '#ef4444', border: 'none' } : {}) }} onClick={handleReschedule}>
+                              {vencido ? 'Reagendar entrega' : (ticket.delivery_date ? 'Atualizar prazo' : 'Definir prazo de entrega')}
+                            </button>
+                          </div>
+                        ) : canManage ? (
+                          <button className="btn btn-ghost" style={{ width: '100%', marginTop: '8px', fontSize: '0.8rem' }} onClick={() => setRescheduling(true)}>Alterar prazo</button>
+                        ) : null}
+                      </>
+                    )}
                   </div>
-                  <div className="form-group" style={{ marginBottom: '1.5rem' }}>
-                    <label style={{ fontSize: '0.75rem' }}>Urgência</label>
-                    <select value={urgency} onChange={e => setUrgency(e.target.value)} style={{ padding: '8px', fontSize: '0.85rem' }}>
-                      {URGENCY_LEVELS.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                    </select>
+
+                  {/* Tipo + Urgência lado a lado */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
+                    <div className="form-group" style={{ margin: 0 }}>
+                      <label style={{ fontSize: '0.75rem' }}>Tipo do ticket</label>
+                      <select value={tipo} onChange={e => setTipo(e.target.value)} style={{ padding: '8px', fontSize: '0.85rem' }}>
+                        <option value="">Selecione...</option>
+                        {TICKET_TYPES.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                      </select>
+                    </div>
+                    <div className="form-group" style={{ margin: 0 }}>
+                      <label style={{ fontSize: '0.75rem' }}>Urgência</label>
+                      <select value={urgency} onChange={e => setUrgency(e.target.value)} style={{ padding: '8px', fontSize: '0.85rem' }}>
+                        {URGENCY_LEVELS.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                      </select>
+                    </div>
                   </div>
+
+                  {/* Status (passo) — só o administrador altera */}
+                  {user?.role === 'admin' && (
+                    <div className="form-group" style={{ marginBottom: '1rem' }}>
+                      <label style={{ fontSize: '0.75rem' }}>Status (passo do ticket)</label>
+                      <select value={statusSel} onChange={e => setStatusSel(e.target.value)} style={{ padding: '8px', fontSize: '0.85rem' }}>
+                        {DEV_STATUS.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                        {OTHER_STATUS.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      </select>
+                    </div>
+                  )}
                   <div className="form-group" style={{ position: 'relative' }}>
                     <label style={{ fontSize: '0.75rem' }}>Notas Técnicas</label>
                     <textarea 
@@ -1506,45 +2275,44 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, allUsers, user
                     ></textarea>
                   </div>
 
-                  {/* Sistema de Compartilhamento (ACL) */}
+                  {/* Compartilhar — toggle; ao ligar, escolhe colegas do MESMO setor do responsável */}
                   {(user?.id === ticket.created_by || user?.name === ticket.responsible) && (
                     <div className="form-group" style={{ marginBottom: '1.5rem' }}>
-                      <label style={{ fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <Users size={14} /> Compartilhar Ticket
+                      <label style={{ fontSize: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px' }}>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><Users size={14} /> Compartilhar ticket</span>
+                        <button type="button" onClick={() => setShareOn(v => !v)} aria-pressed={shareOn} style={{ width: '40px', height: '22px', borderRadius: '11px', border: 'none', cursor: 'pointer', position: 'relative', background: shareOn ? 'var(--primary)' : 'var(--glass-border)', transition: 'background 0.2s', flexShrink: 0 }}>
+                          <span style={{ position: 'absolute', top: '2px', left: shareOn ? '20px' : '2px', width: '18px', height: '18px', borderRadius: '50%', background: '#fff', transition: 'left 0.2s' }} />
+                        </button>
                       </label>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', background: 'rgba(0,0,0,0.02)', padding: '10px', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
-                        <select 
-                          className="sharing-select"
-                          style={{ margin: 0, padding: '6px', fontSize: '0.8rem' }}
-                          onChange={(e) => {
+                      {shareOn && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', background: 'rgba(0,0,0,0.02)', padding: '10px', borderRadius: '12px', border: '1px solid var(--glass-border)', marginTop: '8px' }}>
+                          <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Quem mais vê no Kanban (colegas do setor do responsável):</span>
+                          <select className="sharing-select" style={{ margin: 0, padding: '6px', fontSize: '0.8rem' }} onChange={(e) => {
                             const val = parseInt(e.target.value);
-                            if (val && !sharedWith.includes(val)) {
-                              setSharedWith([...sharedWith, val]);
-                            }
-                            e.target.value = "";
-                          }}
-                        >
-                          <option value="">Selecionar usuário...</option>
-                          {allUsers
-                            .filter(u => u.id !== user.id && !sharedWith.includes(u.id))
-                            .map(u => <option key={u.id} value={u.id}>{u.name} ({u.role})</option>)
-                          }
-                        </select>
-                        
-                        {sharedWith.length > 0 && (
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '4px' }}>
-                            {sharedWith.map(uId => {
-                              const u = allUsers.find(userObj => userObj.id === uId);
-                              return (
-                                <div key={uId} style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'var(--primary)', color: 'white', padding: '2px 8px', borderRadius: '12px', fontSize: '0.7rem', fontWeight: '600' }}>
-                                  {u?.name || 'User'}
-                                  <X size={12} style={{ cursor: 'pointer' }} onClick={() => setSharedWith(sharedWith.filter(id => id !== uId))} />
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
+                            if (val && !sharedWith.includes(val)) setSharedWith([...sharedWith, val]);
+                            e.target.value = '';
+                          }}>
+                            <option value="">Selecionar colega...</option>
+                            {shareCandidates.map(u => <option key={u.id} value={u.id}>{u.name} ({u.role})</option>)}
+                          </select>
+                          {shareCandidates.length === 0 && sharedWith.length === 0 && (
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>Nenhum colega no mesmo setor do responsável.</span>
+                          )}
+                          {sharedWith.length > 0 && (
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '4px' }}>
+                              {sharedWith.map(uId => {
+                                const u = allUsers.find(userObj => userObj.id === uId);
+                                return (
+                                  <div key={uId} style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'var(--primary)', color: 'white', padding: '2px 8px', borderRadius: '12px', fontSize: '0.7rem', fontWeight: '600' }}>
+                                    {u?.name || 'User'}
+                                    <X size={12} style={{ cursor: 'pointer' }} onClick={() => setSharedWith(sharedWith.filter(id => id !== uId))} />
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -1556,9 +2324,12 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, allUsers, user
                     </div>
                   )}
                   <button className="btn btn-primary" style={{ width: '100%', marginTop: '0.5rem' }} onClick={() => {
-                    const updates = { responsible, urgency, dev_notes: devNotes };
+                    // Definiu tipo + prazo enquanto em Backlog/Análise → avança para Resolvendo
+                    let finalStatus = statusSel;
+                    if (tipo && deliveryDate && (finalStatus === 'analise' || finalStatus === 'backlog')) finalStatus = 'resolvendo';
+                    const updates = { responsible, urgency, dev_notes: devNotes, ticket_type: tipo || null, status: finalStatus, delivery_date: deliveryDate || null };
                     if (user?.id === ticket.created_by || user?.name === ticket.responsible) {
-                      updates.shared_with = sharedWith;
+                      updates.shared_with = shareOn ? sharedWith : [];
                     }
                     onUpdate(ticket.id, updates);
                     playSound('success');
@@ -1566,7 +2337,14 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, allUsers, user
                   }}>Salvar Alterações</button>
                 </div>
 
-                <div style={{ marginTop: 'auto' }}>
+                <div className="form-group" style={{ marginTop: 'auto', marginBottom: '1.5rem' }}>
+                  <label style={{ fontSize: '0.75rem' }}>Responsável</label>
+                  <div style={{ padding: '10px 12px', borderRadius: '10px', background: 'rgba(0,0,0,0.03)', border: '1px solid var(--glass-border)', fontSize: '0.85rem', fontWeight: 600 }}>
+                    {ticket.responsible || 'Sem responsável'}
+                  </div>
+                </div>
+
+                <div>
                   <div className="modal-section-title" style={{ marginBottom: '1.5rem' }}>
                     <Activity size={18} /> Atividade
                   </div>
@@ -1582,7 +2360,7 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, allUsers, user
                       </div>
                       <div className="activity-content">
                         <div className="activity-user">{creator?.name || "Usuário"}</div>
-                        <div className="activity-text">criou este ticket para o sistema {systems.find(p => p.id == ticket.platform)?.name}</div>
+                        <div className="activity-text">{ticketOrigem(ticket, setores) ? `criou este ticket (de ${ticketOrigem(ticket, setores)}) para ` : 'criou este ticket para '}{ticketDestino(ticket, setores, systems)}</div>
                         <div className="activity-time">{new Date(ticket.created_at).toLocaleString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
                       </div>
                     </div>
@@ -1636,10 +2414,102 @@ function MediaPreviewModal({ media, onClose }) {
 }
 
 
-// --- Analytics Dashboard (Premium) ---
-function AnalyticsDashboard({ tickets }) {
+// Classifica um ticket com prazo: 'onTime' (resolvido ≤ prazo), 'late' (resolvido depois OU vencido sem resolver), null (pendente no prazo)
+function classifyDelivery(t, logs) {
+  if (!t.delivery_date) return null;
+  const due = new Date(t.delivery_date); due.setHours(23, 59, 59, 999);
+  const resLog = logs
+    .filter(l => String(l.ticket_id) === String(t.id) && l.action_type === 'STATUS_CHANGED' && l.new_value === 'resolvido')
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
+  const resolvedAt = resLog ? new Date(resLog.created_at) : (t.status === 'resolvido' ? new Date(t.updated_at) : null);
+  if (resolvedAt) return resolvedAt <= due ? 'onTime' : 'late';
+  if (new Date() > due) return 'late';
+  return null;
+}
+
+// Gráfico de linha compacto (SVG inline): entregas no prazo x fora do prazo por semana
+function ProdutividadeChart({ data }) {
+  const series = [
+    { key: 'onTime', label: 'No prazo', color: '#10b981' },
+    { key: 'late', label: 'Fora do prazo', color: '#ef4444' },
+  ];
+  if (!data || data.length === 0) {
+    return <div style={{ padding: '1.25rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.8rem' }}>Sem entregas com prazo concluído ainda.</div>;
+  }
+  const totals = data.reduce((a, d) => ({ onTime: a.onTime + d.onTime, late: a.late + d.late }), { onTime: 0, late: 0 });
+  const W = 480, H = 150, padL = 22, padR = 12, padT = 10, padB = 22;
+  const innerW = W - padL - padR, innerH = H - padT - padB;
+  const n = data.length;
+  const yMax = Math.max(1, ...data.map(d => Math.max(d.onTime, d.late)));
+  const x = (i) => padL + (n === 1 ? innerW / 2 : (innerW * i) / (n - 1));
+  const y = (v) => padT + innerH - (innerH * v) / yMax;
+  const fmt = (d) => new Date(d).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+  const points = (key) => data.map((d, i) => `${x(i).toFixed(1)},${y(d[key]).toFixed(1)}`).join(' ');
+  const step = Math.max(1, Math.ceil(yMax / 3));
+  const ticks = [];
+  for (let v = 0; v <= yMax; v += step) ticks.push(v);
+  return (
+    <div>
+      {/* Legenda + totais numa linha só */}
+      <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+        {series.map(s => (
+          <div key={s.key} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>
+            <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: s.color, display: 'inline-block' }} />
+            {s.label} <strong style={{ color: 'var(--text-main)' }}>{totals[s.key]}</strong>
+          </div>
+        ))}
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto' }} role="img" aria-label="Entregas no prazo versus fora do prazo por semana">
+        {ticks.map(v => (
+          <g key={v}>
+            <line x1={padL} y1={y(v)} x2={W - padR} y2={y(v)} stroke="var(--glass-border)" strokeWidth="1" />
+            <text x={padL - 5} y={y(v) + 3} textAnchor="end" fontSize="9" fill="var(--text-muted)">{v}</text>
+          </g>
+        ))}
+        {data.map((d, i) => (
+          <text key={i} x={x(i)} y={H - padB + 15} textAnchor="middle" fontSize="9" fill="var(--text-muted)">{fmt(d.date)}</text>
+        ))}
+        {series.map(s => (
+          <g key={s.key}>
+            {n > 1 && <polyline points={points(s.key)} fill="none" stroke={s.color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />}
+            {data.map((d, i) => (
+              <circle key={i} cx={x(i)} cy={y(d[s.key])} r="4" fill={s.color} stroke="var(--surface)" strokeWidth="2">
+                <title>{`Semana de ${fmt(d.date)} — ${s.label}: ${d[s.key]}`}</title>
+              </circle>
+            ))}
+          </g>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
+// Ranking compacto por pessoa: quem entrega no prazo x fora do prazo
+function RankingPessoas({ people }) {
+  if (!people || people.length === 0) {
+    return <div style={{ padding: '1.25rem 0', color: 'var(--text-muted)', fontSize: '0.8rem', fontStyle: 'italic' }}>Sem entregas atribuídas ainda.</div>;
+  }
+  const cor = (r) => r >= 0.7 ? '#10b981' : r >= 0.4 ? '#f59e0b' : '#ef4444';
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+      {people.map(p => (
+        <div key={p.name} style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <span style={{ flex: '0 0 88px', fontSize: '0.8rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={p.name}>{p.name}</span>
+          <div style={{ flex: 1, height: '8px', borderRadius: '4px', background: 'rgba(239,68,68,0.55)', overflow: 'hidden' }} title={`${p.onTime} no prazo · ${p.late} fora`}>
+            <div style={{ width: `${Math.round(p.rate * 100)}%`, height: '100%', background: '#10b981' }} />
+          </div>
+          <strong style={{ flex: '0 0 34px', textAlign: 'right', fontSize: '0.8rem', color: cor(p.rate) }}>{Math.round(p.rate * 100)}%</strong>
+          <span style={{ flex: '0 0 auto', fontSize: '0.7rem', color: 'var(--text-muted)' }}>{p.onTime}/{p.total}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AnalyticsDashboard({ tickets, setores = [] }) {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [selectedSetor, setSelectedSetor] = useState(''); // '' = análise geral de todos os setores
   const [selectedResp, setSelectedResp] = useState('');
 
   useEffect(() => {
@@ -1651,41 +2521,66 @@ function AnalyticsDashboard({ tickets }) {
     fetchAllLogs();
   }, []);
 
+  // Lista de usuários do filtro depende do setor selecionado
   const responsibleList = React.useMemo(() => {
-    return Array.from(new Set(tickets.map(t => t.responsible).filter(Boolean))).sort();
-  }, [tickets]);
+    const base = selectedSetor ? tickets.filter(t => String(t.setor_id) === String(selectedSetor)) : tickets;
+    return Array.from(new Set(base.map(t => t.responsible).filter(Boolean))).sort();
+  }, [tickets, selectedSetor]);
 
-  const kpis = React.useMemo(() => {
-    if (!logs.length || !tickets.length) return null;
-    let totalMTTV = 0, mttvCount = 0, totalMTR = 0, mtrCount = 0, bottlenecks = [];
-
-    const filteredTickets = selectedResp
-      ? tickets.filter(t => t.responsible === selectedResp)
-      : tickets;
-
-    if (!filteredTickets.length) return { avgMttv: 0, avgMtr: 0, bottlenecks: [] };
-
-    filteredTickets.forEach(ticket => {
-      const ticketLogs = logs.filter(l => String(l.ticket_id) === String(ticket.id)).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-      const createTime = new Date(ticket.created_at);
-      const viewLog = ticketLogs.find(l => l.action_type === 'TICKET_VIEWED_FIRST_TIME');
-      if (viewLog) { totalMTTV += (new Date(viewLog.created_at) - createTime) / (1000 * 60); mttvCount++; }
-      else if (ticket.status !== 'resolvido') {
-        const waiting = (new Date() - createTime) / (1000 * 60);
-        if (waiting > 60) bottlenecks.push({ ...ticket, waitingMins: waiting });
-      }
-      const resLog = ticketLogs.find(l => l.action_type === 'STATUS_CHANGED' && l.new_value === 'resolvido');
-      if (resLog) { totalMTR += (new Date(resLog.created_at) - createTime) / (1000 * 60 * 60); mtrCount++; }
-    });
-
-    return {
-      avgMttv: mttvCount ? (totalMTTV / mttvCount).toFixed(0) : 0,
-      avgMtr: mtrCount ? (totalMTR / mtrCount).toFixed(1) : 0,
-      bottlenecks: bottlenecks.sort((a, b) => b.waitingMins - a.waitingMins).slice(0, 5)
+  // Produtividade: entregas no prazo x fora do prazo, por semana da data de entrega
+  const deliveryTrend = React.useMemo(() => {
+    const base = tickets.filter(t =>
+      (!selectedSetor || String(t.setor_id) === String(selectedSetor)) &&
+      (!selectedResp || t.responsible === selectedResp) &&
+      t.delivery_date
+    );
+    // segunda-feira da semana da data de entrega
+    const weekStart = (d) => {
+      const dt = new Date(d); dt.setHours(0, 0, 0, 0);
+      dt.setDate(dt.getDate() - ((dt.getDay() + 6) % 7));
+      return dt;
     };
-  }, [logs, tickets, selectedResp]);
+    const buckets = new Map();
+    base.forEach(t => {
+      const outcome = classifyDelivery(t, logs);
+      if (!outcome) return; // pendente e ainda no prazo → não conta
+      const wk = weekStart(t.delivery_date);
+      const key = wk.getTime();
+      if (!buckets.has(key)) buckets.set(key, { date: wk, onTime: 0, late: 0 });
+      buckets.get(key)[outcome]++;
+    });
+    return Array.from(buckets.values()).sort((a, b) => a.date - b.date);
+  }, [logs, tickets, selectedSetor, selectedResp]);
 
-  if (loading) return <div style={{ padding: '3rem', textAlign: 'center' }}>Mapeando Telemetria...</div>;
+  // Quem entrega no prazo x fora do prazo (ranking por pessoa; escopo = setor selecionado)
+  const deliveryByPerson = React.useMemo(() => {
+    const base = selectedSetor ? tickets.filter(t => String(t.setor_id) === String(selectedSetor)) : tickets;
+    const map = new Map();
+    base.filter(t => t.delivery_date && t.responsible).forEach(t => {
+      const outcome = classifyDelivery(t, logs);
+      if (!outcome) return;
+      if (!map.has(t.responsible)) map.set(t.responsible, { name: t.responsible, onTime: 0, late: 0 });
+      map.get(t.responsible)[outcome]++;
+    });
+    return Array.from(map.values())
+      .map(p => ({ ...p, total: p.onTime + p.late, rate: (p.onTime + p.late) ? p.onTime / (p.onTime + p.late) : 0 }))
+      .sort((a, b) => b.rate - a.rate || b.total - a.total);
+  }, [logs, tickets, selectedSetor]);
+
+  if (loading) return (
+    <div className="animate-in">
+      <Skeleton w={200} h={26} r={8} style={{ marginBottom: '2rem' }} />
+      <div className="glass" style={{ padding: '1.5rem' }}>
+        <Skeleton w={280} h={16} style={{ marginBottom: '1.25rem' }} />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1.75rem' }}>
+          <Skeleton w="100%" h={150} r={12} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} w="100%" h={14} />)}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <div className="animate-in">
@@ -1693,51 +2588,57 @@ function AnalyticsDashboard({ tickets }) {
         <h2 style={{ fontSize: '1.5rem', fontWeight: '700', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
           <BarChart3 color="var(--primary)" /> Analytics & BI
         </h2>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', background: 'var(--surface)', padding: '6px 12px', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
-          <Users size={16} style={{ color: 'var(--text-muted)' }} />
-          <select
-            value={selectedResp}
-            onChange={e => setSelectedResp(e.target.value)}
-            className="analytics-select"
-            style={{ border: 'none', margin: 0, padding: '4px', fontSize: '0.85rem', fontWeight: '600', width: 'auto', color: 'inherit', background: 'none', cursor: 'pointer' }}
-          >
-            <option value="">Equipe Geral</option>
-            {responsibleList.map(r => <option key={r} value={r}>{r}</option>)}
-          </select>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--surface)', padding: '6px 12px', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
+            <Layers size={16} style={{ color: 'var(--text-muted)' }} />
+            <select
+              value={selectedSetor}
+              onChange={e => { setSelectedSetor(e.target.value); setSelectedResp(''); }}
+              className="analytics-select"
+              style={{ border: 'none', margin: 0, padding: '4px', fontSize: '0.85rem', fontWeight: '600', width: 'auto', color: 'inherit', background: 'none', cursor: 'pointer' }}
+            >
+              <option value="">Todos os setores</option>
+              {setores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--surface)', padding: '6px 12px', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
+            <Users size={16} style={{ color: 'var(--text-muted)' }} />
+            <select
+              value={selectedResp}
+              onChange={e => setSelectedResp(e.target.value)}
+              className="analytics-select"
+              style={{ border: 'none', margin: 0, padding: '4px', fontSize: '0.85rem', fontWeight: '600', width: 'auto', color: 'inherit', background: 'none', cursor: 'pointer' }}
+            >
+              <option value="">Todos os usuários</option>
+              {responsibleList.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </div>
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem', marginBottom: '2.5rem' }}>
-        <div className="glass" style={{ padding: '2rem', borderLeft: '4px solid #6366f1' }}>
-          <span style={{ fontSize: '0.8rem', fontWeight: '700', color: 'var(--text-muted)' }}>TMT (RESPOSTA)</span>
-          <h3 style={{ fontSize: '2.5rem', fontWeight: '800' }}>{kpis?.avgMttv}min</h3>
-        </div>
-        <div className="glass" style={{ padding: '2rem', borderLeft: '4px solid #10b981' }}>
-          <span style={{ fontSize: '0.8rem', fontWeight: '700', color: 'var(--text-muted)' }}>TMR (RESOLUÇÃO)</span>
-          <h3 style={{ fontSize: '2.5rem', fontWeight: '800' }}>{kpis?.avgMtr}h</h3>
+      <div className="glass" style={{ padding: '1.5rem', marginBottom: '1.5rem' }}>
+        <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '0 0 1rem', fontSize: '1rem', fontWeight: 800 }}>
+          <Calendar size={16} color="var(--primary)" /> Produtividade — entregas no prazo x fora do prazo
+        </h3>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1.75rem', alignItems: 'start' }}>
+          <div>
+            <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 700, marginBottom: '8px' }}>Tendência · {selectedSetor ? (setores.find(s => String(s.id) === String(selectedSetor))?.name || 'setor') : 'todos os setores'}{selectedResp ? ` · ${selectedResp}` : ''}</div>
+            <ProdutividadeChart data={deliveryTrend} />
+          </div>
+          <div>
+            <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 700, marginBottom: '10px' }}>Quem entrega no prazo</div>
+            <RankingPessoas people={deliveryByPerson} />
+          </div>
         </div>
       </div>
 
-      <div className="glass" style={{ padding: '2rem' }}>
-        <h3 style={{ color: '#ef4444', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '1.5rem' }}><AlertTriangle size={18} /> Gargalos de SLA</h3>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          {kpis?.bottlenecks.map(b => (
-            <div key={b.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '1rem', background: 'rgba(239,68,68,0.05)', borderRadius: '8px' }}>
-              <div>
-                <div style={{ fontWeight: '600' }}>{b.title}</div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Resp: {b.responsible || 'Vazio'}</div>
-              </div>
-              <div style={{ fontWeight: '800', color: '#ef4444' }}>{(b.waitingMins / 60).toFixed(1)}h</div>
-            </div>
-          ))}
-        </div>
-      </div>
     </div>
   );
 }
 
 // --- Views Administrativas ---
-function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers }) {
+function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers, setores = [] }) {
+  const setorNome = (id) => setores.find(s => s.id == id)?.name || '';
   const dbUsers = allUsers || [];
   const [loading, setLoading] = useState(false);
   const [isNewUserModalOpen, setIsNewUserModalOpen] = useState(false);
@@ -1753,6 +2654,7 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers 
     e.preventDefault();
     const fd = new FormData(e.target);
     const data = Object.fromEntries(fd);
+    data.setor_id = data.setor_id ? Number(data.setor_id) : null;
     const { error } = await api.from('users').insert([{ ...data, avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${data.email}` }]);
     if (!error) { 
       toast.success('Membro criado!'); 
@@ -1766,6 +2668,8 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers 
     e.preventDefault();
     const fd = new FormData(e.target);
     const data = Object.fromEntries(fd);
+    data.setor_id = data.setor_id ? Number(data.setor_id) : null;
+    if (!data.password) delete data.password; // em branco = mantém a senha atual
     const { error } = await api.from('users').update(data).eq('id', editingUser.id);
     if (!error) { 
       toast.success('Dados atualizados!'); 
@@ -1838,6 +2742,7 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers 
                       <div>
                         <div style={{ fontWeight: '700', fontSize: '0.95rem' }}>{u.name}</div>
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{u.email}</div>
+                        {u.setor_id && <div style={{ fontSize: '0.7rem', color: 'var(--primary)', fontWeight: 700, marginTop: '2px' }}>Setor: {setorNome(u.setor_id)}</div>}
                       </div>
                     </div>
                   </td>
@@ -1888,6 +2793,10 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers 
                 <option value="dev">Dev</option>
                 <option value="admin">Admin</option>
               </select>
+              <select name="setor_id" defaultValue="">
+                <option value="">Setor (nenhum)</option>
+                {setores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
               <button type="submit" className="btn btn-primary" style={{ marginTop: '1rem' }}>Cadastrar</button>
             </form>
           </motion.div>
@@ -1906,11 +2815,18 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers 
               <input name="name" defaultValue={editingUser?.name} placeholder="Nome" required />
               <label style={{ fontSize: '0.75rem' }}>E-mail de Acesso</label>
               <input name="email" type="email" defaultValue={editingUser?.email} placeholder="E-mail" required />
+              <label style={{ fontSize: '0.75rem' }}>Nova Senha <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(deixe em branco para manter)</span></label>
+              <input name="password" type="text" placeholder="Definir nova senha" autoComplete="new-password" />
               <label style={{ fontSize: '0.75rem' }}>Cargo / Permissão</label>
               <select name="role" defaultValue={editingUser?.role}>
                 <option value="user">User</option>
                 <option value="dev">Dev</option>
                 <option value="admin">Admin</option>
+              </select>
+              <label style={{ fontSize: '0.75rem' }}>Setor</label>
+              <select name="setor_id" defaultValue={editingUser?.setor_id ?? ''}>
+                <option value="">Setor (nenhum)</option>
+                {setores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
               <button type="submit" className="btn btn-primary" style={{ marginTop: '1rem' }}>Salvar Alterações</button>
             </form>
@@ -1922,16 +2838,21 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers 
   );
 }
 
-function SystemsView({ user, systems, onUpdate }) {
+function SetoresView({ user, setores = [], systems = [], onUpdate }) {
   const [activeModal, setActiveModal] = useState(null); // 'edit_name' | 'manage_resps' | 'delete_confirm' | 'new_system'
-  const [editingSystem, setEditingSystem] = useState(null);
+  const [editingEntity, setEditingEntity] = useState(null);
+  const [editingTable, setEditingTable] = useState('setores'); // 'setores' | 'systems'
+  const [newParentSetorId, setNewParentSetorId] = useState(null); // setor onde o novo sistema entra
   const [allUsers, setAllUsers] = useState([]);
   const [selectedResps, setSelectedResps] = useState([]);
+  const [linkModal, setLinkModal] = useState(null); // { tipo, target } p/ o link de registro
+
+  const isAdmin = user?.role === 'admin';
+  const entityLabel = editingTable === 'setores' ? 'Setor' : 'Sub-Setor';
+  const fem = entityLabel.endsWith('a'); // concordância de gênero (Setor/Sub-Setor = masculino)
 
   useEffect(() => {
-    if (activeModal === 'manage_resps') {
-      fetchUsers();
-    }
+    if (activeModal === 'manage_resps') fetchUsers();
   }, [activeModal]);
 
   const fetchUsers = async () => {
@@ -1939,20 +2860,34 @@ function SystemsView({ user, systems, onUpdate }) {
     setAllUsers(data || []);
   };
 
+  const openModal = (type, table, entity = null, parentSetorId = null) => {
+    setEditingTable(table);
+    setEditingEntity(entity);
+    setNewParentSetorId(parentSetorId);
+    if (type === 'manage_resps') setSelectedResps(entity?.primary_responsibles || []);
+    setActiveModal(type);
+  };
+
+  const closeModal = () => {
+    setActiveModal(null);
+    setEditingEntity(null);
+    setSelectedResps([]);
+    setNewParentSetorId(null);
+  };
+
   const handleSaveName = async (e) => {
     e.preventDefault();
-    const fd = new FormData(e.target);
-    const name = fd.get('name');
+    const name = new FormData(e.target).get('name');
     try {
       if (activeModal === 'new_system') {
-        const { error } = await api.from('systems').insert([{
-          name,
-          primary_responsibles: []
-        }]);
+        const payload = editingTable === 'systems'
+          ? { name, primary_responsibles: [], setor_id: newParentSetorId }
+          : { name, primary_responsibles: [] };
+        const { error } = await api.from(editingTable).insert([payload]);
         if (error) throw error;
-        toast.success('Sistema criado!');
+        toast.success(`${entityLabel} criad${fem ? 'a' : 'o'}!`);
       } else {
-        const { error } = await api.from('systems').update({ name }).eq('id', editingSystem.id);
+        const { error } = await api.from(editingTable).update({ name }).eq('id', editingEntity.id);
         if (error) throw error;
         toast.success('Nome atualizado!');
       }
@@ -1964,41 +2899,25 @@ function SystemsView({ user, systems, onUpdate }) {
   };
 
   const handleSaveResps = async () => {
-    console.log('[DEBUG] Realizando UPSERT de responsáveis para ID:', editingSystem?.id);
-
-    if (!editingSystem?.id) {
-      toast.error('Sistema não identificado.');
-      return;
-    }
-
+    if (!editingEntity?.id) { toast.error('Registro não identificado.'); return; }
     try {
-      // Usando upsert para criar o sistema caso ele seja apenas mockado (local)
-      const { data, error, status } = await api.from('systems')
-        .upsert({
-          id: editingSystem.id,
-          name: editingSystem.name, // Mantendo o nome original
-          primary_responsibles: selectedResps
-        })
-        .select();
-
-      console.log('[DEBUG] Resultado UPSERT:', { data, error, status });
-
+      const payload = { id: editingEntity.id, name: editingEntity.name, primary_responsibles: selectedResps };
+      if (editingTable === 'systems') payload.setor_id = editingEntity.setor_id; // preserva o vínculo com o setor
+      const { error } = await api.from(editingTable).upsert(payload).select();
       if (error) throw error;
-
-      toast.success('Configurações persistidas com sucesso!');
+      toast.success('Equipe salva!');
       closeModal();
       onUpdate();
     } catch (err) {
-      console.error('Erro ao persistir sistema:', err);
       toast.error(`Erro ao salvar: ${err.message || 'Falha no banco'}`);
     }
   };
 
   const handleConfirmDelete = async () => {
     try {
-      const { error } = await api.from('systems').delete().eq('id', editingSystem.id);
+      const { error } = await api.from(editingTable).delete().eq('id', editingEntity.id);
       if (error) throw error;
-      toast.success('Sistema excluído.');
+      toast.success(`${entityLabel} excluíd${fem ? 'a' : 'o'}.`);
       closeModal();
       onUpdate();
     } catch (err) {
@@ -2006,74 +2925,101 @@ function SystemsView({ user, systems, onUpdate }) {
     }
   };
 
-  const closeModal = () => {
-    setActiveModal(null);
-    setEditingSystem(null);
-    setSelectedResps([]);
+  const toggleResp = (name) => {
+    setSelectedResps(prev => prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]);
   };
 
-  const toggleResp = (name) => {
-    setSelectedResps(prev =>
-      prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]
-    );
-  };
+  const RespChips = ({ list }) => (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+      {list?.length > 0 ? list.map((r, idx) => (
+        <span key={idx} style={{ padding: '4px 10px', background: 'rgba(0,0,0,0.05)', borderRadius: '6px', fontSize: '0.75rem', fontWeight: '600', color: 'var(--text-main)', border: '1px solid var(--glass-border)' }}>{r}</span>
+      )) : <span style={{ fontStyle: 'italic', fontSize: '0.8rem', color: 'var(--text-muted)' }}>Nenhum responsável</span>}
+    </div>
+  );
 
   return (
     <div className="animate-in">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2.5rem' }}>
         <div>
           <h2 style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '1.75rem', fontWeight: '800' }}>
-            <Layers color="var(--primary)" size={28} /> Sistemas
+            <Layers color="var(--primary)" size={28} /> Setores
           </h2>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginTop: '4px' }}>Gerencie as plataformas e as equipes responsáveis.</p>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginTop: '4px' }}>Gerencie os setores, seus sistemas e as equipes responsáveis.</p>
         </div>
-        {user?.role === 'admin' && (
-          <button className="btn btn-primary" onClick={() => setActiveModal('new_system')}>
-            <Plus size={18} /> Novo Sistema
+        {isAdmin && (
+          <button className="btn btn-primary" onClick={() => openModal('new_system', 'setores')}>
+            <Plus size={18} /> Novo Setor
           </button>
         )}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1.5rem' }}>
-        {systems.map(s => (
-          <motion.div layout key={s.id} className="glass" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: 'rgba(99, 102, 241, 0.1)', color: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Code2 size={20} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+        {setores.map(setor => {
+          const sistemasDoSetor = systems.filter(sys => sys.setor_id == setor.id);
+          return (
+            <motion.div layout key={setor.id} className="glass" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+              {/* Cabeçalho do setor */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: 'rgba(99, 102, 241, 0.1)', color: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Layers size={20} />
+                  </div>
+                  <h3 style={{ fontWeight: '800', fontSize: '1.2rem' }}>{setor.name}</h3>
                 </div>
-                <h4 style={{ fontWeight: '700', fontSize: '1.1rem' }}>{s.name}</h4>
-              </div>
-              <div style={{ display: 'flex', gap: '4px' }}>
-                <button onClick={() => { setEditingSystem(s); setActiveModal('edit_name'); }} className="icon-btn" title="Editar Nome"><Pencil size={14} /></button>
-                <button onClick={() => { setEditingSystem(s); setSelectedResps(s.primary_responsibles || []); setActiveModal('manage_resps'); }} className="icon-btn" title="Gerenciar Responsáveis"><UserPlus size={14} /></button>
-                <button onClick={() => { setEditingSystem(s); setActiveModal('delete_confirm'); }} className="icon-btn logout" title="Excluir"><Trash2 size={14} /></button>
-              </div>
-            </div>
-
-            <div>
-              <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', fontWeight: '700', marginBottom: '8px' }}>Responsáveis</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                {s.primary_responsibles?.length > 0 ? (
-                  s.primary_responsibles.map((r, idx) => (
-                    <span key={idx} style={{ padding: '4px 10px', background: 'rgba(0,0,0,0.05)', borderRadius: '6px', fontSize: '0.75rem', fontWeight: '600', color: 'var(--text-main)', border: '1px solid var(--glass-border)' }}>
-                      {r}
-                    </span>
-                  ))
-                ) : (
-                  <span style={{ fontStyle: 'italic', fontSize: '0.8rem', color: 'var(--text-muted)' }}>Nenhum responsável</span>
+                {isAdmin && (
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    <button onClick={() => openModal('new_system', 'systems', null, setor.id)} className="icon-btn" title="Adicionar Sub-Setor"><Plus size={14} /></button>
+                    <button onClick={() => setLinkModal({ tipo: 'setor', target: setor })} className="icon-btn" title="Link de registro"><Link2 size={14} /></button>
+                    <button onClick={() => openModal('edit_name', 'setores', setor)} className="icon-btn" title="Editar Nome"><Pencil size={14} /></button>
+                    <button onClick={() => openModal('manage_resps', 'setores', setor)} className="icon-btn" title="Equipe do Setor"><UserPlus size={14} /></button>
+                    <button onClick={() => openModal('delete_confirm', 'setores', setor)} className="icon-btn logout" title="Excluir Setor"><Trash2 size={14} /></button>
+                  </div>
                 )}
               </div>
-            </div>
-          </motion.div>
-        ))}
+
+              {/* Corpo: sistemas do setor OU equipe do setor (quando não ramifica) */}
+              {sistemasDoSetor.length > 0 ? (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>
+                  {sistemasDoSetor.map(sys => (
+                    <div key={sys.id} style={{ padding: '1rem', borderRadius: '12px', border: '1px solid var(--glass-border)', background: 'rgba(0,0,0,0.02)', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <Code2 size={16} color="var(--primary)" />
+                          <span style={{ fontWeight: '700' }}>{sys.name}</span>
+                        </div>
+                        {isAdmin && (
+                          <div style={{ display: 'flex', gap: '2px' }}>
+                            <button onClick={() => setLinkModal({ tipo: 'categoria', target: sys })} className="icon-btn" title="Link de registro"><Link2 size={12} /></button>
+                            <button onClick={() => openModal('edit_name', 'systems', sys)} className="icon-btn" title="Editar Nome"><Pencil size={12} /></button>
+                            <button onClick={() => openModal('manage_resps', 'systems', sys)} className="icon-btn" title="Responsáveis"><UserPlus size={12} /></button>
+                            <button onClick={() => openModal('delete_confirm', 'systems', sys)} className="icon-btn logout" title="Excluir"><Trash2 size={12} /></button>
+                          </div>
+                        )}
+                      </div>
+                      <RespChips list={sys.primary_responsibles} />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div>
+                  <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', fontWeight: '700', marginBottom: '8px' }}>Equipe do setor (setor sem sistemas)</div>
+                  <RespChips list={setor.primary_responsibles} />
+                </div>
+              )}
+            </motion.div>
+          );
+        })}
+        {setores.length === 0 && (
+          <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '2rem' }}>Nenhum setor cadastrado.</div>
+        )}
       </div>
 
       <AnimatePresence>
         {activeModal && (
           <SystemActionModal
             type={activeModal}
-            system={editingSystem}
+            entityLabel={entityLabel}
+            system={editingEntity}
             users={allUsers}
             selectedResps={selectedResps}
             onClose={closeModal}
@@ -2084,14 +3030,24 @@ function SystemsView({ user, systems, onUpdate }) {
           />
         )}
       </AnimatePresence>
+
+      <AnimatePresence>
+        {linkModal && (
+          <RegistroLinkModal tipo={linkModal.tipo} target={linkModal.target} onClose={() => setLinkModal(null)} />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
 
 // --- Sub-componente para Modais de Sistemas (Estabilidade de Portal/Animação) ---
-function SystemActionModal({ type, system, users, selectedResps, onClose, onSaveName, onSaveResps, onConfirmDelete, onToggleResp }) {
+function SystemActionModal({ type, entityLabel = 'Sistema', system, users, selectedResps, onClose, onSaveName, onSaveResps, onConfirmDelete, onToggleResp }) {
   const [mounted, setMounted] = useState(false);
+  const [busca, setBusca] = useState('');
   useEffect(() => setMounted(true), []);
+
+  const fem = entityLabel.endsWith('a'); // concordância de gênero (ex: Categoria)
+  const usuariosFiltrados = users.filter(u => (u.name || '').toLowerCase().includes(busca.toLowerCase()));
 
   if (!mounted) return null;
 
@@ -2106,7 +3062,7 @@ function SystemActionModal({ type, system, users, selectedResps, onClose, onSave
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
           <h2>
             {type === 'edit_name' && 'Editar Nome'}
-            {type === 'new_system' && 'Novo Sistema'}
+            {type === 'new_system' && `${fem ? 'Nova' : 'Novo'} ${entityLabel}`}
             {type === 'manage_resps' && 'Gerenciar Responsáveis'}
             {type === 'delete_confirm' && 'Confirmar Exclusão'}
           </h2>
@@ -2118,18 +3074,32 @@ function SystemActionModal({ type, system, users, selectedResps, onClose, onSave
         {(type === 'edit_name' || type === 'new_system') && (
           <form onSubmit={onSaveName} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
             <div className="form-group">
-              <label>Nome do Sistema</label>
-              <input name="name" defaultValue={system?.name} placeholder="Ex: Matriz, Zaploto..." required autoFocus />
+              <label>Nome d{fem ? 'a' : 'o'} {entityLabel}</label>
+              <input name="name" defaultValue={system?.name} placeholder={entityLabel === 'Setor' ? 'Ex: TI, Financeiro...' : 'Ex: Matriz, Zaploto...'} required autoFocus />
             </div>
             <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>Gravar Alterações</button>
           </form>
         )}
 
         {type === 'manage_resps' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-            <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>Responsáveis para <strong>{system?.name}</strong>:</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+            <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', margin: 0 }}>Responsáveis para <strong>{system?.name}</strong>:</p>
+            <div style={{ position: 'relative' }}>
+              <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+              <input
+                type="text"
+                value={busca}
+                onChange={e => setBusca(e.target.value)}
+                placeholder="Buscar usuário pelo nome..."
+                style={{ margin: 0, paddingLeft: '38px' }}
+                autoFocus
+              />
+            </div>
             <div style={{ maxHeight: '300px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {users.map(u => (
+              {usuariosFiltrados.length === 0 && (
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontStyle: 'italic', textAlign: 'center', padding: '1rem 0' }}>Nenhum usuário encontrado.</p>
+              )}
+              {usuariosFiltrados.map(u => (
                 <div
                   key={u.email}
                   onClick={() => onToggleResp(u.name)}
@@ -2161,7 +3131,7 @@ function SystemActionModal({ type, system, users, selectedResps, onClose, onSave
               <AlertTriangle size={32} />
             </div>
             <p style={{ marginBottom: '2rem', lineHeight: '1.6' }}>
-              Excluir o sistema <strong>{system?.name}</strong>?<br />
+              Excluir {fem ? 'a' : 'o'} {entityLabel.toLowerCase()} <strong>{system?.name}</strong>?<br />
               <span style={{ color: '#ef4444', fontSize: '0.85rem' }}>Esta ação é irreversível.</span>
             </p>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>

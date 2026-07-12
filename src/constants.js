@@ -10,9 +10,18 @@ export const PLATFORMS = [
 
 export const DEV_STATUS = [
   { id: 'backlog', name: 'Backlog', userStatus: 'aberto', userStatusName: 'Aberto', color: '#6366f1' },
+  { id: 'analise', name: 'Análise', userStatus: 'pendente', userStatusName: 'Em Análise', color: '#3b82f6' },
   { id: 'resolvendo', name: 'Resolvendo', userStatus: 'pendente', userStatusName: 'Pendente', color: '#f59e0b' },
   { id: 'em_teste', name: 'Em Teste', userStatus: 'pendente', userStatusName: 'Pendente', color: '#8b5cf6' },
   { id: 'resolvido', name: 'Resolvido', userStatus: 'resolvido', userStatusName: 'Resolvido', color: '#10b981' },
+];
+
+// Tipo do ticket (definido no modal de detalhes)
+export const TICKET_TYPES = [
+  { id: 'demanda', name: 'Demanda', color: '#6366f1' },
+  { id: 'bug', name: 'Bug', color: '#ef4444' },
+  { id: 'problema', name: 'Problema', color: '#f59e0b' },
+  { id: 'melhoria', name: 'Melhoria', color: '#10b981' },
 ];
 
 export const OTHER_STATUS = [

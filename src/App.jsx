@@ -43,6 +43,7 @@ import {
   ArrowUpDown,
   Link2,
   Share2,
+  Settings,
   PlusCircle,
   LogIn,
   Eye,
@@ -521,6 +522,7 @@ function AppHeader({ currentView, setView, user, theme, toggleTheme, onLogout })
     { id: 'users', name: 'Usuários', icon: <Users size={18} />, roles: ['admin'] },
     { id: 'setores', name: 'Setores', icon: <Layers size={18} />, roles: ['admin'] },
     { id: 'logs', name: 'Logs', icon: <Activity size={18} />, roles: ['admin'] },
+    { id: 'config', name: 'Config', icon: <Settings size={18} />, roles: ['admin'] },
   ];
 
   const visibleMenus = menus.filter(m => m.roles.includes(role));
@@ -1360,6 +1362,8 @@ export default function App() {
                 <AnalyticsDashboard tickets={filteredTickets} setores={setoresList} />
               ) : view === 'logs' ? (
                 <LogsView />
+              ) : view === 'config' ? (
+                <ConfigView />
               ) : view === 'profile' ? (
                 <ProfileView user={user} onUpdate={(updated) => { setUser(updated); localStorage.setItem('currentUser', JSON.stringify(updated)); setView('tickets'); }} />
               ) : (
@@ -3542,6 +3546,86 @@ function SystemActionModal({ type, entityLabel = 'Sistema', system, users, selec
       </motion.div>
     </div>,
     document.body
+  );
+}
+
+// --- Configurações do sistema (admin): credenciais de e-mail (Resend) ---
+function ConfigView() {
+  const [status, setStatus] = useState({ emailConfigured: false, emailFrom: null });
+  const [apiKey, setApiKey] = useState('');
+  const [from, setFrom] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [testeEmail, setTesteEmail] = useState('');
+  const [testando, setTestando] = useState(false);
+
+  const carregar = async () => {
+    try { const r = await (await fetch('/api/config')).json(); setStatus(r); setFrom(r.emailFrom || ''); } catch {}
+  };
+  useEffect(() => { carregar(); }, []);
+
+  const salvar = async () => {
+    setSaving(true);
+    try {
+      const r = await (await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ resendApiKey: apiKey || undefined, emailFrom: from || undefined }) })).json();
+      if (r.ok) { toast.success('Configuração salva!'); setApiKey(''); playSound('success'); carregar(); }
+      else toast.error('Erro ao salvar: ' + (r.error || ''));
+    } catch { toast.error('Erro ao salvar.'); }
+    finally { setSaving(false); }
+  };
+
+  const enviarTeste = async () => {
+    if (!testeEmail) { toast.error('Informe um e-mail para o teste.'); return; }
+    setTestando(true);
+    try {
+      const r = await (await fetch('/api/notify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: [testeEmail], subject: 'TicketFlow — teste de e-mail', html: '<p>Se você recebeu este e-mail, a integração do <b>TicketFlow</b> está funcionando ✅</p>' }) })).json();
+      if (r.ok) toast.success('E-mail de teste enviado!');
+      else if (r.skipped) toast.error('E-mail não configurado ainda.');
+      else toast.error('Falha no envio: ' + (r.error || ''));
+    } catch { toast.error('Falha no envio.'); }
+    finally { setTestando(false); }
+  };
+
+  return (
+    <div className="animate-in" style={{ maxWidth: '640px' }}>
+      <div style={{ marginBottom: '2rem' }}>
+        <h2 style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '1.75rem', fontWeight: '800' }}>
+          <Settings color="var(--primary)" size={28} /> Configurações
+        </h2>
+        <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginTop: '4px' }}>Credenciais de integração do sistema.</p>
+      </div>
+
+      <div className="glass" style={{ padding: '1.75rem', border: '1px solid var(--glass-border)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+          <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800 }}>Notificações por e-mail (Resend)</h3>
+          <span className="badge" style={{ background: status.emailConfigured ? 'rgba(16,185,129,0.12)' : 'rgba(100,116,139,0.12)', color: status.emailConfigured ? '#10b981' : 'var(--text-muted)', fontWeight: 700, fontSize: '0.7rem', padding: '4px 10px' }}>
+            {status.emailConfigured ? 'Configurado ✓' : 'Não configurado'}
+          </span>
+        </div>
+
+        <div className="form-group">
+          <label style={{ fontSize: '0.75rem' }}>API Key do Resend <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(em branco = mantém a atual)</span></label>
+          <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="re_..." autoComplete="new-password" />
+        </div>
+        <div className="form-group">
+          <label style={{ fontSize: '0.75rem' }}>Remetente (From)</label>
+          <input value={from} onChange={e => setFrom(e.target.value)} placeholder="TicketFlow &lt;chamados@seudominio.com&gt;" />
+        </div>
+        <button className="btn btn-primary" style={{ width: '100%' }} onClick={salvar} disabled={saving}>{saving ? 'Salvando…' : 'Salvar configuração'}</button>
+
+        <div style={{ height: '1px', background: 'var(--glass-border)', margin: '1.5rem 0' }} />
+
+        <div className="form-group">
+          <label style={{ fontSize: '0.75rem' }}>Enviar e-mail de teste para</label>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <input type="email" value={testeEmail} onChange={e => setTesteEmail(e.target.value)} placeholder="seu@email.com" style={{ flex: 1, margin: 0 }} />
+            <button className="btn btn-ghost" style={{ flex: '0 0 auto' }} onClick={enviarTeste} disabled={testando}>{testando ? 'Enviando…' : 'Testar'}</button>
+          </div>
+          <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '6px' }}>
+            Em modo teste (remetente <code>onboarding@resend.dev</code>) o Resend só entrega para o e-mail da conta. Para enviar aos responsáveis dos setores, verifique um domínio no Resend e use um remetente dele.
+          </p>
+        </div>
+      </div>
+    </div>
   );
 }
 

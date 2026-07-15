@@ -145,6 +145,10 @@ async function run() {
       if (APPLY) await conn.query(sql);
     }
 
+    // 5.1) tabela app_config (config editável pelo admin; fora do allowlist do /api/data)
+    console.log('   tabela app_config: garantir (CREATE TABLE IF NOT EXISTS)');
+    if (APPLY) await conn.query('CREATE TABLE IF NOT EXISTS app_config (chave VARCHAR(100) PRIMARY KEY, valor TEXT, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)');
+
     const ddl = [
       ['idx_users_setor',     'users',   'ALTER TABLE users ADD INDEX idx_users_setor (setor_id)', () => indexExiste(conn, 'users', 'idx_users_setor')],
       ['idx_users_system',    'users',   'ALTER TABLE users ADD INDEX idx_users_system (system_id)', () => indexExiste(conn, 'users', 'idx_users_system')],

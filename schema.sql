@@ -92,6 +92,13 @@ CREATE TABLE IF NOT EXISTS ticket_messages (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
+-- Config do app (credenciais Resend etc.), editável pelo admin. NÃO entra no allowlist do /api/data (secret).
+CREATE TABLE IF NOT EXISTS app_config (
+    chave VARCHAR(100) PRIMARY KEY,
+    valor TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
 -- FKs de users.setor_id/system_id (declaradas aqui porque `setores`/`systems` são criadas depois de `users`)
 ALTER TABLE users ADD CONSTRAINT fk_users_setor FOREIGN KEY (setor_id) REFERENCES setores(id) ON DELETE SET NULL;
 ALTER TABLE users ADD CONSTRAINT fk_users_system FOREIGN KEY (system_id) REFERENCES systems(id) ON DELETE SET NULL;

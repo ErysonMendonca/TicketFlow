@@ -1031,7 +1031,8 @@ export default function App() {
         `<p>Uma nova demanda foi aberta para o seu setor.</p>
          <p><b>#${data[0].id} — ${data[0].title}</b></p>
          <p>${(data[0].description || '').slice(0, 500)}</p>
-         <p>Aberta por: ${user?.name || '—'}</p>`
+         <p>Aberta por: ${user?.name || '—'}</p>`,
+        'ticket_criado'
       );
       return data[0];
     };
@@ -1054,11 +1055,11 @@ export default function App() {
     });
   };
 
-  // Notificação por e-mail (fire-and-forget; a rota /api/notify faz skip se não estiver configurada)
-  const enviarEmail = (to, subject, html) => {
+  // Notificação por e-mail (fire-and-forget; a rota /api/notify faz skip se não configurada OU se o evento estiver desativado)
+  const enviarEmail = (to, subject, html, evento) => {
     const recipients = (Array.isArray(to) ? to : [to]).filter(Boolean);
     if (recipients.length === 0) return;
-    fetch('/api/notify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: recipients, subject, html }) })
+    fetch('/api/notify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: recipients, subject, html, evento }) })
       .catch(e => console.warn('Falha ao notificar por e-mail:', e));
   };
 
@@ -1123,7 +1124,8 @@ export default function App() {
             `Atualização na sua demanda #${ticketId}`,
             `<p>Sua demanda <b>#${ticketId} — ${oldTicket.title}</b> foi atualizada por ${user?.name || 'a equipe'}.</p>` +
             (updates.status !== undefined ? `<p>Status: ${DEV_STATUS.find(s => s.id === updates.status)?.name || updates.status}</p>` : '') +
-            (updates.responsible !== undefined ? `<p>Responsável: ${updates.responsible || 'Sem responsável'}</p>` : '')
+            (updates.responsible !== undefined ? `<p>Responsável: ${updates.responsible || 'Sem responsável'}</p>` : ''),
+            'ticket_alterado'
           );
         }
       }
@@ -1167,7 +1169,8 @@ export default function App() {
           const criador = allUsers.find(u => u.id === oldTicket.created_by);
           if (criador?.email) {
             enviarEmail(criador.email, `Atualização na sua demanda #${ticketId}`,
-              `<p>Sua demanda <b>#${ticketId} — ${oldTicket.title}</b> mudou para <b>${DEV_STATUS.find(s => s.id === newStatus)?.name || newStatus}</b> (por ${user?.name || 'a equipe'}).</p>`);
+              `<p>Sua demanda <b>#${ticketId} — ${oldTicket.title}</b> mudou para <b>${DEV_STATUS.find(s => s.id === newStatus)?.name || newStatus}</b> (por ${user?.name || 'a equipe'}).</p>`,
+              'ticket_alterado');
           }
         }
       }
@@ -2367,9 +2370,19 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, setores = [], 
     const { error } = await api.from('ticket_messages').insert([{ ticket_id: ticket.id, user_id: user.id, message: txt }]);
     if (error) { toast.error('Erro ao enviar mensagem.'); return; }
     await fetchMessages();
-    // avisa o outro lado (criador ↔ responsável)
+    // avisa o outro lado (criador ↔ responsável) — socket + e-mail (evento "nova_mensagem")
     const destino = user.id === ticket.created_by ? allUsers.find(u => u.name === ticket.responsible)?.id : ticket.created_by;
     socket.emit('ticket_message', { ticketId: ticket.id, from: user.name, toUserId: destino });
+    const destinoUser = allUsers.find(u => u.id === destino);
+    if (destinoUser?.email) {
+      const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      fetch('/api/notify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        to: [destinoUser.email],
+        subject: `Nova mensagem na demanda #${ticket.id}`,
+        html: `<p><b>${esc(user.name)}</b> escreveu na demanda <b>#${ticket.id} — ${esc(ticket.title)}</b>:</p><blockquote>${esc(txt)}</blockquote>`,
+        evento: 'nova_mensagem'
+      }) }).catch(() => {});
+    }
     playSound('success');
   };
 
@@ -3557,16 +3570,17 @@ function ConfigView() {
   const [saving, setSaving] = useState(false);
   const [testeEmail, setTesteEmail] = useState('');
   const [testando, setTestando] = useState(false);
+  const [notif, setNotif] = useState({ ticket_criado: true, ticket_alterado: true, nova_mensagem: true });
 
   const carregar = async () => {
-    try { const r = await (await fetch('/api/config')).json(); setStatus(r); setFrom(r.emailFrom || ''); } catch {}
+    try { const r = await (await fetch('/api/config')).json(); setStatus(r); setFrom(r.emailFrom || ''); if (r.notif) setNotif(r.notif); } catch {}
   };
   useEffect(() => { carregar(); }, []);
 
   const salvar = async () => {
     setSaving(true);
     try {
-      const r = await (await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ resendApiKey: apiKey || undefined, emailFrom: from || undefined }) })).json();
+      const r = await (await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ resendApiKey: apiKey || undefined, emailFrom: from || undefined, notif }) })).json();
       if (r.ok) { toast.success('Configuração salva!'); setApiKey(''); playSound('success'); carregar(); }
       else toast.error('Erro ao salvar: ' + (r.error || ''));
     } catch { toast.error('Erro ao salvar.'); }
@@ -3610,7 +3624,25 @@ function ConfigView() {
           <label style={{ fontSize: '0.75rem' }}>Remetente (From)</label>
           <input value={from} onChange={e => setFrom(e.target.value)} placeholder="TicketFlow &lt;chamados@seudominio.com&gt;" />
         </div>
-        <button className="btn btn-primary" style={{ width: '100%' }} onClick={salvar} disabled={saving}>{saving ? 'Salvando…' : 'Salvar configuração'}</button>
+
+        <div style={{ height: '1px', background: 'var(--glass-border)', margin: '1.25rem 0' }} />
+        <h4 style={{ margin: '0 0 0.5rem', fontSize: '0.95rem', fontWeight: 800 }}>Quando enviar e-mail</h4>
+        <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', margin: '0 0 0.75rem' }}>Escolha quais eventos disparam notificação por e-mail.</p>
+        {[
+          ['ticket_criado', 'Ao criar uma demanda', 'avisa os responsáveis do setor de destino'],
+          ['ticket_alterado', 'Em qualquer alteração da demanda', 'avisa o solicitante (criador)'],
+          ['nova_mensagem', 'Ao chegar nova mensagem no chat', 'avisa o outro lado da conversa'],
+        ].map(([k, titulo, sub]) => (
+          <label key={k} style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '8px 0', cursor: 'pointer' }}>
+            <input type="checkbox" checked={!!notif[k]} onChange={e => setNotif({ ...notif, [k]: e.target.checked })} style={{ width: 'auto', margin: '3px 0 0' }} />
+            <span>
+              <span style={{ fontSize: '0.9rem', fontWeight: 600, display: 'block' }}>{titulo}</span>
+              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{sub}</span>
+            </span>
+          </label>
+        ))}
+
+        <button className="btn btn-primary" style={{ width: '100%', marginTop: '1rem' }} onClick={salvar} disabled={saving}>{saving ? 'Salvando…' : 'Salvar configuração'}</button>
 
         <div style={{ height: '1px', background: 'var(--glass-border)', margin: '1.5rem 0' }} />
 

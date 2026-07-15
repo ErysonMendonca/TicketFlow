@@ -12,19 +12,26 @@ async function lerConfig() {
   return m;
 }
 
+const EVENTOS = ['ticket_criado', 'ticket_alterado', 'nova_mensagem'];
+
 export async function GET() {
   try {
-    const c = await lerConfig();
-    return NextResponse.json({ emailConfigured: !!c.resend_api_key, emailFrom: c.email_from || null });
+    const [rows] = await pool.query("SELECT chave, valor FROM app_config");
+    const m = {};
+    for (const r of rows) m[r.chave] = r.valor;
+    const notif = {};
+    for (const e of EVENTOS) notif[e] = m['notif_' + e] !== 'false'; // default: habilitado
+    return NextResponse.json({ emailConfigured: !!m.resend_api_key, emailFrom: m.email_from || null, notif });
   } catch (e) {
-    // tabela ainda não existe (migração não rodou) → tratar como não configurado
-    return NextResponse.json({ emailConfigured: false, emailFrom: null });
+    // tabela ainda não existe (migração não rodou) → tratar como não configurado, toggles default on
+    const notif = {}; for (const ev of EVENTOS) notif[ev] = true;
+    return NextResponse.json({ emailConfigured: false, emailFrom: null, notif });
   }
 }
 
 export async function POST(request) {
   try {
-    const { resendApiKey, emailFrom } = await request.json();
+    const { resendApiKey, emailFrom, notif } = await request.json();
     const up = async (chave, valor) => {
       if (valor === undefined || valor === null || valor === '') return; // em branco = mantém o atual
       await pool.query(
@@ -34,6 +41,11 @@ export async function POST(request) {
     };
     await up('resend_api_key', resendApiKey);
     await up('email_from', emailFrom);
+    if (notif && typeof notif === 'object') {
+      for (const e of EVENTOS) {
+        if (typeof notif[e] === 'boolean') await up('notif_' + e, notif[e] ? 'true' : 'false');
+      }
+    }
     return NextResponse.json({ ok: true });
   } catch (e) {
     return NextResponse.json({ error: e.message }, { status: 500 });

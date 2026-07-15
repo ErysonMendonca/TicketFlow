@@ -15,11 +15,24 @@ async function credenciais() {
   }
 }
 
+// Toggle do evento (default habilitado se não houver registro em app_config)
+async function eventoHabilitado(evento) {
+  if (!evento) return true;
+  try {
+    const [rows] = await pool.query('SELECT valor FROM app_config WHERE chave = ?', ['notif_' + evento]);
+    return rows.length === 0 ? true : rows[0].valor !== 'false';
+  } catch {
+    return true;
+  }
+}
+
 export async function POST(request) {
   try {
-    const { to, subject, html, text } = await request.json();
+    const { to, subject, html, text, evento } = await request.json();
     const recipients = (Array.isArray(to) ? to : [to]).filter(Boolean);
     if (recipients.length === 0) return NextResponse.json({ skipped: true, reason: 'sem destinatários' });
+
+    if (!(await eventoHabilitado(evento))) return NextResponse.json({ skipped: true, reason: `notificação "${evento}" desativada` });
 
     const { key: KEY, from: FROM } = await credenciais();
     if (!KEY || !FROM) return NextResponse.json({ skipped: true, reason: 'e-mail não configurado (defina em Config ou no .env)' });

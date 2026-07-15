@@ -1,11 +1,13 @@
 import { NextResponse } from 'next/server';
 import { pool } from '@/lib/db.js';
+import { hashSenha } from '@/lib/auth.js';
 
 // Auto-registro por link (público). Insere o usuário e, se for responsável, anexa aos primary_responsibles.
 export async function POST(request) {
   try {
     const { name, email, password, tipo, id, papel } = await request.json();
     if (!name || !email || !password) return NextResponse.json({ error: 'Preencha nome, e-mail e senha.' }, { status: 400 });
+    const senhaHash = hashSenha(password);
 
     const role = papel === 'responsavel_subsetor' ? 'responsavel_subsetor' : 'funcionario';
     const table = tipo === 'setor' ? 'setores' : 'systems';
@@ -16,7 +18,7 @@ export async function POST(request) {
 
     const [r] = await pool.query(
       'INSERT INTO users (name, email, password, role, setor_id, system_id, avatar) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [name, email, password, role, setorId, systemId, `https://api.dicebear.com/7.x/avataaars/svg?seed=${email}`]
+      [name, email, senhaHash, role, setorId, systemId, `https://api.dicebear.com/7.x/avataaars/svg?seed=${email}`]
     );
     const newId = r.insertId;
 

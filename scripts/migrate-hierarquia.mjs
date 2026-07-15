@@ -14,6 +14,7 @@
 // Aplicar de verdade (idealmente num DUMP/banco de teste antes):
 //   node --env-file=.env scripts/migrate-hierarquia.mjs --apply
 import { pool } from '../src/lib/db.js';
+import { hashSenha } from '../src/lib/auth.js';
 
 const APPLY = process.argv.includes('--apply');
 const DB = process.env.MYSQL_DATABASE;
@@ -132,6 +133,12 @@ async function run() {
     const [emTeste] = await conn.query("SELECT COUNT(*) c FROM tickets WHERE status='em_teste'");
     console.log(`\n4.1) tickets em 'em_teste' (coluna removida do padrão) → 'resolvendo': ${emTeste[0].c}`);
     if (APPLY && emTeste[0].c > 0) await conn.query("UPDATE tickets SET status='resolvendo' WHERE status='em_teste'");
+
+    // ---- 4.2) senhas em texto puro → hash (scrypt). Idempotente: hash já tem ':' → pula ----
+    const [usersPwd] = await conn.query('SELECT id, password FROM users');
+    const planas = usersPwd.filter(u => u.password && !String(u.password).includes(':'));
+    console.log(`\n4.2) senhas em texto puro → hash (scrypt): ${planas.length}`);
+    if (APPLY) for (const u of planas) await conn.query('UPDATE users SET password = ? WHERE id = ?', [hashSenha(u.password), u.id]);
 
     if (APPLY) { await conn.commit(); console.log('\n>> dados COMMITados.'); }
 

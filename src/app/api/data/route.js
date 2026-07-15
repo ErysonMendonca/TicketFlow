@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { pool } from '@/lib/db.js';
-import { usuarioDaSessao } from '@/lib/auth.js';
+import { usuarioDaSessao, hashSenha } from '@/lib/auth.js';
 
 export async function POST(request) {
   try {
@@ -29,6 +29,16 @@ export async function POST(request) {
     }
     // Ler logs do sistema: só admin
     if (table === 'system_logs' && action === 'select' && !admin) return semPermissao();
+
+    // Nunca gravar senha em texto puro: faz hash em qualquer escrita de users
+    if (table === 'users' && ['insert', 'update', 'upsert'].includes(action) && data) {
+      const items = Array.isArray(data) ? data : [data];
+      for (const it of items) {
+        if (it && typeof it.password === 'string' && it.password && !it.password.includes(':')) {
+          it.password = hashSenha(it.password);
+        }
+      }
+    }
 
     let query = '';
     let values = [];

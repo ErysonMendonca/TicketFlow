@@ -3,6 +3,21 @@ import crypto from 'node:crypto';
 
 export const gerarToken = () => crypto.randomBytes(32).toString('hex');
 
+// --- Hash de senha (scrypt nativo; formato salt:hash) ---
+export function hashSenha(senha) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const derived = crypto.scryptSync(String(senha), salt, 32).toString('hex');
+  return `${salt}:${derived}`;
+}
+export function verificarSenha(senha, armazenada) {
+  if (!armazenada || !String(armazenada).includes(':')) return false;
+  const [salt, hash] = String(armazenada).split(':');
+  const derived = crypto.scryptSync(String(senha), salt, 32).toString('hex');
+  const a = Buffer.from(hash, 'hex');
+  const b = Buffer.from(derived, 'hex');
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
 // IP da máquina (atrás de proxy usa x-forwarded-for)
 export function clientIp(request) {
   const xff = request.headers.get('x-forwarded-for');

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { pool } from '@/lib/db.js';
+import { hashSenha } from '@/lib/auth.js';
 
 // Redefine a senha a partir de um token válido (não usado e não expirado).
 export async function POST(request) {
@@ -15,7 +16,7 @@ export async function POST(request) {
     const pr = rows[0];
     if (!pr) return NextResponse.json({ error: 'Link inválido ou expirado. Peça um novo.' }, { status: 400 });
 
-    await pool.query('UPDATE users SET password = ? WHERE id = ?', [password, pr.user_id]);
+    await pool.query('UPDATE users SET password = ? WHERE id = ?', [hashSenha(password), pr.user_id]);
     await pool.query('UPDATE password_resets SET used = 1 WHERE token = ?', [token]);
     return NextResponse.json({ ok: true });
   } catch (e) {

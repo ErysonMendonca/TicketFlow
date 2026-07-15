@@ -1028,10 +1028,13 @@ export default function App() {
       enviarEmail(
         emailsDosResponsaveis(data[0]),
         `Nova demanda #${data[0].id} — ${data[0].title}`,
-        `<p>Uma nova demanda foi aberta para o seu setor.</p>
-         <p><b>#${data[0].id} — ${data[0].title}</b></p>
-         <p>${(data[0].description || '').slice(0, 500)}</p>
-         <p>Aberta por: ${user?.name || '—'}</p>`,
+        {
+          cabecalho: 'Notificação de Ticket', icone: '✉️', ticketId: data[0].id,
+          titulo: `#${data[0].id} — ${data[0].title}`,
+          descricao: (data[0].description || '—').slice(0, 500),
+          situacao: 'Aberto', situacaoCor: '#6366f1',
+          assinatura: `Aberto por ${user?.name || '—'}`,
+        },
         'ticket_criado'
       );
       return data[0];
@@ -1055,11 +1058,11 @@ export default function App() {
     });
   };
 
-  // Notificação por e-mail (fire-and-forget; a rota /api/notify faz skip se não configurada OU se o evento estiver desativado)
-  const enviarEmail = (to, subject, html, evento) => {
+  // Notificação por e-mail (fire-and-forget; template branded renderizado no servidor a partir do `email` estruturado)
+  const enviarEmail = (to, subject, email, evento) => {
     const recipients = (Array.isArray(to) ? to : [to]).filter(Boolean);
     if (recipients.length === 0) return;
-    fetch('/api/notify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: recipients, subject, html, evento }) })
+    fetch('/api/notify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: recipients, subject, email, evento }) })
       .catch(e => console.warn('Falha ao notificar por e-mail:', e));
   };
 
@@ -1122,9 +1125,17 @@ export default function App() {
           enviarEmail(
             criador.email,
             `Atualização na sua demanda #${ticketId}`,
-            `<p>Sua demanda <b>#${ticketId} — ${oldTicket.title}</b> foi atualizada por ${user?.name || 'a equipe'}.</p>` +
-            (updates.status !== undefined ? `<p>Status: ${DEV_STATUS.find(s => s.id === updates.status)?.name || updates.status}</p>` : '') +
-            (updates.responsible !== undefined ? `<p>Responsável: ${updates.responsible || 'Sem responsável'}</p>` : ''),
+            (() => {
+              const sid = updates.status !== undefined ? updates.status : oldTicket.status;
+              const si = DEV_STATUS.find(s => s.id === sid);
+              return {
+                cabecalho: 'Atualização de Ticket', icone: '🔄', ticketId,
+                titulo: `#${ticketId} — ${oldTicket.title}`,
+                descricao: updates.responsible !== undefined ? `Responsável: ${updates.responsible || 'Sem responsável'}` : undefined,
+                situacao: si?.name || sid, situacaoCor: si?.color || '#0ea5e9',
+                assinatura: `Atualizado por ${user?.name || 'a equipe'}`,
+              };
+            })(),
             'ticket_alterado'
           );
         }
@@ -1168,9 +1179,13 @@ export default function App() {
         if (user?.id !== oldTicket.created_by) {
           const criador = allUsers.find(u => u.id === oldTicket.created_by);
           if (criador?.email) {
-            enviarEmail(criador.email, `Atualização na sua demanda #${ticketId}`,
-              `<p>Sua demanda <b>#${ticketId} — ${oldTicket.title}</b> mudou para <b>${DEV_STATUS.find(s => s.id === newStatus)?.name || newStatus}</b> (por ${user?.name || 'a equipe'}).</p>`,
-              'ticket_alterado');
+            enviarEmail(criador.email, `Atualização na sua demanda #${ticketId}`, {
+              cabecalho: 'Atualização de Ticket', icone: '🔄', ticketId,
+              titulo: `#${ticketId} — ${oldTicket.title}`,
+              situacao: DEV_STATUS.find(s => s.id === newStatus)?.name || newStatus,
+              situacaoCor: DEV_STATUS.find(s => s.id === newStatus)?.color || '#0ea5e9',
+              assinatura: `Atualizado por ${user?.name || 'a equipe'}`,
+            }, 'ticket_alterado');
           }
         }
       }
@@ -1254,6 +1269,14 @@ export default function App() {
     toast.success('Ticket recusado.');
     setAcceptGate(null);
   };
+
+  // Deep-link do e-mail: #/ticket/<id> → abre o ticket quando logado e os tickets já carregaram
+  useEffect(() => {
+    const m = hash.match(/^#\/ticket\/(\d+)/);
+    if (!m || !user || tickets.length === 0) return;
+    const t = tickets.find(x => x.id === Number(m[1]));
+    if (t) { requestOpenTicket(t); window.location.hash = ''; }
+  }, [hash, user, tickets]);
 
   // Visibilidade por hierarquia (setor/sub-setor). ponytail: regra client-side, como o resto do app.
   const visibleTickets = tickets.filter(t => canSeeTicket(t, user, setoresList, systemsList));
@@ -2375,11 +2398,15 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, setores = [], 
     socket.emit('ticket_message', { ticketId: ticket.id, from: user.name, toUserId: destino });
     const destinoUser = allUsers.find(u => u.id === destino);
     if (destinoUser?.email) {
-      const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
       fetch('/api/notify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         to: [destinoUser.email],
         subject: `Nova mensagem na demanda #${ticket.id}`,
-        html: `<p><b>${esc(user.name)}</b> escreveu na demanda <b>#${ticket.id} — ${esc(ticket.title)}</b>:</p><blockquote>${esc(txt)}</blockquote>`,
+        email: {
+          cabecalho: 'Nova Mensagem', icone: '💬', ticketId: ticket.id,
+          titulo: `#${ticket.id} — ${ticket.title}`,
+          mensagem: txt,
+          assinatura: `De ${user.name}`,
+        },
         evento: 'nova_mensagem'
       }) }).catch(() => {});
     }
@@ -3591,7 +3618,7 @@ function ConfigView() {
     if (!testeEmail) { toast.error('Informe um e-mail para o teste.'); return; }
     setTestando(true);
     try {
-      const r = await (await fetch('/api/notify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: [testeEmail], subject: 'TicketFlow — teste de e-mail', html: '<p>Se você recebeu este e-mail, a integração do <b>TicketFlow</b> está funcionando ✅</p>' }) })).json();
+      const r = await (await fetch('/api/notify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: [testeEmail], subject: 'TicketFlow — teste de e-mail', email: { cabecalho: 'Notificação de Ticket', icone: '✉️', titulo: 'E-mail de teste', descricao: 'Se você recebeu este e-mail, a integração de notificações do TicketFlow está funcionando ✅', assinatura: 'TicketFlow' } }) })).json();
       if (r.ok) toast.success('E-mail de teste enviado!');
       else if (r.skipped) toast.error('E-mail não configurado ainda.');
       else toast.error('Falha no envio: ' + (r.error || ''));

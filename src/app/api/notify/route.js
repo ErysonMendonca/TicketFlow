@@ -34,17 +34,15 @@ function renderEmail({ cabecalho, icone, titulo, descricao, situacao, situacaoCo
     `<div style="margin-top:18px;"><span style="display:inline-block;background:#ffffff;color:${situacaoCor || AZUL};font-size:12px;font-weight:800;padding:7px 15px;border-radius:999px;">${esc(situacao)}</span></div>`
   );
 
-  return `<div style="background:#eef2ff;padding:30px 12px;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;">
+  return `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;padding:0;">
+<div style="background:#eef2ff;padding:30px 12px;font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
     <table role="presentation" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:18px;overflow:hidden;border:1px solid #e0e7ff;">
       <tr><td style="background:${AZUL};padding:22px 28px;text-align:center;">
         <div style="color:#c7d2fe;font-size:11px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;">TicketFlow · TynkeTech</div>
         <div style="color:#ffffff;font-size:21px;font-weight:800;margin-top:5px;">${esc(cabecalho || 'Notificação de Ticket')}</div>
       </td></tr>
-      <tr><td style="text-align:center;padding:26px 0 4px;">
-        <div style="display:inline-block;width:76px;height:76px;line-height:76px;border-radius:50%;background:#eef2ff;border:1px solid #e0e7ff;font-size:36px;">${icone || '✉️'}</div>
-      </td></tr>
-      <tr><td style="padding:12px 28px ${cta && ctaUrl ? '20px' : '26px'};">
+      <tr><td style="padding:26px 28px ${cta && ctaUrl ? '20px' : '26px'};">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${AZUL};border-radius:16px;">
           <tr><td style="padding:24px 26px;">${bodyBits.join('')}</td></tr>
         </table>
@@ -63,7 +61,7 @@ function renderEmail({ cabecalho, icone, titulo, descricao, situacao, situacaoCo
       </td></tr>
     </table>
   </td></tr></table>
-</div>`;
+</div></body></html>`;
 }
 
 // Toggle do evento (default habilitado se não houver registro em app_config)

@@ -99,6 +99,24 @@ CREATE TABLE IF NOT EXISTS app_config (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
+-- Sessões de login (token enviado pelo cliente em cada chamada; /api/data exige um válido). Fora do allowlist.
+CREATE TABLE IF NOT EXISTS sessions (
+    token VARCHAR(64) PRIMARY KEY,
+    user_id INT NOT NULL,
+    ip VARCHAR(64),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_sessions_user (user_id)
+);
+
+-- Tokens de redefinição de senha (esqueci a senha). Fora do allowlist.
+CREATE TABLE IF NOT EXISTS password_resets (
+    token VARCHAR(64) PRIMARY KEY,
+    user_id INT NOT NULL,
+    expires_at DATETIME NOT NULL,
+    used TINYINT DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- FKs de users.setor_id/system_id (declaradas aqui porque `setores`/`systems` são criadas depois de `users`)
 ALTER TABLE users ADD CONSTRAINT fk_users_setor FOREIGN KEY (setor_id) REFERENCES setores(id) ON DELETE SET NULL;
 ALTER TABLE users ADD CONSTRAINT fk_users_system FOREIGN KEY (system_id) REFERENCES systems(id) ON DELETE SET NULL;

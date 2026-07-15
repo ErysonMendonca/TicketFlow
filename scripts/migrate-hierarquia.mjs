@@ -150,9 +150,13 @@ async function run() {
       if (APPLY) await conn.query(sql);
     }
 
-    // 5.1) tabela app_config (config editável pelo admin; fora do allowlist do /api/data)
-    console.log('   tabela app_config: garantir (CREATE TABLE IF NOT EXISTS)');
-    if (APPLY) await conn.query('CREATE TABLE IF NOT EXISTS app_config (chave VARCHAR(100) PRIMARY KEY, valor TEXT, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)');
+    // 5.1) tabelas de config/auth (fora do allowlist do /api/data)
+    console.log('   tabelas app_config / sessions / password_resets: garantir (CREATE TABLE IF NOT EXISTS)');
+    if (APPLY) {
+      await conn.query('CREATE TABLE IF NOT EXISTS app_config (chave VARCHAR(100) PRIMARY KEY, valor TEXT, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)');
+      await conn.query('CREATE TABLE IF NOT EXISTS sessions (token VARCHAR(64) PRIMARY KEY, user_id INT NOT NULL, ip VARCHAR(64), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, KEY idx_sessions_user (user_id))');
+      await conn.query('CREATE TABLE IF NOT EXISTS password_resets (token VARCHAR(64) PRIMARY KEY, user_id INT NOT NULL, expires_at DATETIME NOT NULL, used TINYINT DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)');
+    }
 
     const ddl = [
       ['idx_users_setor',     'users',   'ALTER TABLE users ADD INDEX idx_users_setor (setor_id)', () => indexExiste(conn, 'users', 'idx_users_setor')],

@@ -18,7 +18,7 @@ async function credenciais() {
 // --- Template de e-mail (HTML à prova de clientes: tabela + estilos inline, cores do sistema) ---
 const AZUL = '#4f46e5';
 function esc(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
-function renderEmail({ cabecalho, icone, titulo, descricao, situacao, situacaoCor, mensagem, assinatura, cta, ctaUrl } = {}) {
+function renderEmail({ cabecalho, icone, titulo, descricao, situacao, situacaoCor, mensagem, assinatura, cta, ctaUrl, ctaNota } = {}) {
   const bodyBits = [
     `<div style="color:#c7d2fe;font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;">Assunto</div>`,
     `<div style="color:#ffffff;font-size:17px;font-weight:800;line-height:1.35;margin:4px 0 2px;">${esc(titulo)}</div>`,
@@ -53,7 +53,7 @@ function renderEmail({ cabecalho, icone, titulo, descricao, situacao, situacaoCo
             <a href="${esc(ctaUrl)}" target="_blank" style="display:inline-block;padding:14px 32px;font-size:14px;font-weight:800;color:#ffffff;text-decoration:none;border-radius:11px;">${esc(cta)}</a>
           </td>
         </tr></table>
-        <div style="font-size:11px;color:#94a3b8;margin-top:10px;">É preciso estar logado no TicketFlow para acessar.</div>
+        ${ctaNota ? `<div style="font-size:11px;color:#94a3b8;margin-top:10px;">${esc(ctaNota)}</div>` : ''}
       </td></tr>` : ''}
       <tr><td style="padding:18px 28px;background:#f8fafc;border-top:1px solid #e2e8f0;text-align:center;">
         ${assinatura ? `<div style="font-size:13px;color:#334155;font-weight:700;">${esc(assinatura)}</div>` : ''}
@@ -90,7 +90,7 @@ export async function POST(request) {
     let emailData = email;
     if (email && email.ticketId) {
       const origin = request.headers.get('origin') || new URL(request.url).origin;
-      emailData = { ...email, cta: email.cta || 'Verificar o ticket agora →', ctaUrl: `${origin}/#/ticket/${email.ticketId}` };
+      emailData = { ...email, cta: email.cta || 'Verificar o ticket agora →', ctaUrl: `${origin}/#/ticket/${email.ticketId}`, ctaNota: email.ctaNota || 'É preciso estar logado no TicketFlow para acessar.' };
     }
     const finalHtml = emailData ? renderEmail(emailData) : html; // conteúdo estruturado → template branded; senão, html cru (compat)
 

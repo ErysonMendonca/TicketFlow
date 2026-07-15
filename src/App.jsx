@@ -103,6 +103,7 @@ const saveTickets = (tickets) => {
 const getStorageTheme = () => localStorage.getItem('theme') || 'light';
 const getStorageUser = () => {
   try {
+    if (!localStorage.getItem('sessionToken')) return null; // sem token de sessão → precisa logar
     const saved = localStorage.getItem('currentUser');
     if (!saved || saved === 'undefined') return null;
     return JSON.parse(saved);
@@ -160,6 +161,81 @@ const LoadingSpinner = ({ label = 'Carregando informações...' }) => (
 // --- Tela de Login (sequência animada + glassmorphism dark) ---
 // Sequência (~2.5s): logo girando com pingos d'água → nome surge → conjunto sobe/encolhe → form desliza → botão fade.
 // Só transform/opacity nas animações (60fps, sem reflow).
+// Tela pública de redefinição de senha (via link do e-mail: #/reset/<token>)
+function ResetScreen({ hash }) {
+  const token = hash.replace(/^#\/?reset\//, '').split('/')[0];
+  const [senha, setSenha] = useState('');
+  const [senha2, setSenha2] = useState('');
+  const [showP, setShowP] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [done, setDone] = useState(false);
+  const [erro, setErro] = useState('');
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  const submeter = async (e) => {
+    e.preventDefault();
+    setErro('');
+    if (senha.length < 4) { setErro('A senha deve ter pelo menos 4 caracteres.'); return; }
+    if (senha !== senha2) { setErro('As senhas não conferem.'); return; }
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/reset-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, password: senha }) });
+      const j = await res.json();
+      if (!res.ok || !j.ok) throw new Error(j.error || 'Não foi possível redefinir a senha.');
+      setDone(true); playSound('success');
+    } catch (err) { setErro(err.message); }
+    finally { setSubmitting(false); }
+  };
+
+  if (!mounted) return null;
+  return (
+    <div className="tt-login">
+      <div className="tt-card" style={{ minHeight: 440 }}>
+        <div className="tt-card-glass" style={{ opacity: 1 }} />
+        <div className="tt-card-inner" style={{ justifyContent: 'center' }}>
+          <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', justifyContent: 'center', marginBottom: '1.25rem' }}>
+              <img src="/TynkeTech.png" alt="TynkeTech" style={{ width: 36, height: 36 }} />
+              <span className="tt-name" style={{ fontSize: '1.3rem' }}>TynkeTech</span>
+            </div>
+            {done ? (
+              <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                <CheckCircle size={44} color="#10b981" style={{ margin: '0 auto' }} />
+                <h1 className="tt-reg-title">Senha redefinida!</h1>
+                <p className="tt-reg-text">Você já pode entrar com a nova senha.</p>
+                <button className="tt-submit" onClick={() => { window.location.hash = '#/login'; }}>Ir para o login</button>
+              </div>
+            ) : (
+              <form className="tt-form" onSubmit={submeter}>
+                <h1 className="tt-reg-title" style={{ textAlign: 'center' }}>Nova senha</h1>
+                <div className="tt-field">
+                  <label>Nova senha</label>
+                  <div className="tt-pass">
+                    <Lock size={18} className="tt-pass-icon" />
+                    <input type={showP ? 'text' : 'password'} value={senha} onChange={e => setSenha(e.target.value)} placeholder="Crie uma senha" required />
+                    <button type="button" className="tt-eye" onClick={() => setShowP(v => !v)} aria-label="Mostrar senha">{showP ? <EyeOff size={18} /> : <Eye size={18} />}</button>
+                  </div>
+                </div>
+                <div className="tt-field">
+                  <label>Confirmar senha</label>
+                  <div className="tt-pass">
+                    <Lock size={18} className="tt-pass-icon" />
+                    <input type={showP ? 'text' : 'password'} value={senha2} onChange={e => setSenha2(e.target.value)} placeholder="Repita a senha" required />
+                  </div>
+                </div>
+                {erro && <p className="tt-error">{erro}</p>}
+                <button type="submit" className="tt-submit" disabled={submitting}>{submitting ? 'Salvando…' : 'Redefinir senha'}</button>
+                <button type="button" className="tt-ghost" onClick={() => { window.location.hash = '#/login'; }}>Voltar ao login</button>
+              </form>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function LoginScreen({ onLogin }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -167,6 +243,9 @@ function LoginScreen({ onLogin }) {
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [phase, setPhase] = useState(0); // 0 carregando · 1 marca · 2 reposiciona · 3 formulário
+  const [esqueceu, setEsqueceu] = useState(false);
+  const [resetEnviado, setResetEnviado] = useState(false);
+  const [enviandoReset, setEnviandoReset] = useState(false);
 
   useEffect(() => {
     // Introdução mais lenta e sentida (~2s girando → revela → sobe → form)
@@ -183,14 +262,28 @@ function LoginScreen({ onLogin }) {
     setError('');
     setIsLoading(true);
     try {
-      const { data, error: dbError } = await api
-        .from('users').select('*').eq('email', email).eq('password', password).single();
-      if (dbError || !data) throw new Error('Email ou senha incorretos.');
-      onLogin(data);
+      const res = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) });
+      const j = await res.json();
+      if (!res.ok || !j.user) throw new Error(j.error || 'E-mail ou senha incorretos.');
+      localStorage.setItem('sessionToken', j.token);
+      onLogin(j.user);
     } catch (err) {
       setError(err.message);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const enviarReset = async (e) => {
+    e.preventDefault();
+    setEnviandoReset(true);
+    try {
+      await fetch('/api/forgot-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) });
+      setResetEnviado(true);
+    } catch (err) {
+      setResetEnviado(true); // não revela se o e-mail existe
+    } finally {
+      setEnviandoReset(false);
     }
   };
 
@@ -248,6 +341,28 @@ function LoginScreen({ onLogin }) {
           {/* Formulário — entra escalonado; botão faz fade por último */}
           <AnimatePresence>
             {phase >= 3 && (
+              esqueceu ? (
+                <div className="tt-form">
+                  {resetEnviado ? (
+                    <>
+                      <p className="tt-reg-text" style={{ textAlign: 'center', lineHeight: 1.6 }}>Se houver uma conta com esse e-mail, enviamos um link para redefinir a senha. Verifique a caixa de entrada (e o spam).</p>
+                      <button type="button" className="tt-submit" onClick={() => { setEsqueceu(false); setResetEnviado(false); }}>Voltar ao login</button>
+                    </>
+                  ) : (
+                    <form className="tt-form" onSubmit={enviarReset}>
+                      <div className="tt-field">
+                        <label>E-mail da conta</label>
+                        <div className="tt-pass">
+                          <Mail size={18} className="tt-pass-icon" />
+                          <input type="email" placeholder="seu@email.com" value={email} onChange={e => setEmail(e.target.value)} required />
+                        </div>
+                      </div>
+                      <button type="submit" className="tt-submit" disabled={enviandoReset}>{enviandoReset ? 'Enviando…' : 'Enviar link de recuperação'}</button>
+                      <button type="button" className="tt-ghost" onClick={() => setEsqueceu(false)}>Voltar ao login</button>
+                    </form>
+                  )}
+                </div>
+              ) : (
               <motion.form className="tt-form" onSubmit={handleLogin} variants={stagger} initial="hidden" animate="show">
                 <motion.div className="tt-field" variants={slideItem}>
                   <label>E-mail</label>
@@ -270,8 +385,12 @@ function LoginScreen({ onLogin }) {
                 <motion.button type="submit" className="tt-submit" variants={fadeItem} disabled={isLoading}>
                   {isLoading ? 'Autenticando…' : 'Entrar'}
                 </motion.button>
+                <motion.button type="button" className="tt-ghost" variants={fadeItem} onClick={() => { setError(''); setEsqueceu(true); }} style={{ marginTop: '-2px' }}>
+                  Esqueceu a senha?
+                </motion.button>
                 <motion.div className="tt-foot" variants={fadeItem}>© 2026 TynkeTech · Powered by Zaya Software</motion.div>
               </motion.form>
+              )
             )}
           </AnimatePresence>
         </div>
@@ -321,27 +440,17 @@ function RegistroScreen({ hash }) {
     if (!form.name || !form.email || !form.password) { toast.error('Preencha nome, e-mail e senha.'); return; }
     setSubmitting(true);
     try {
-      const setorId = tipo === 'setor' ? id : (target?.setor_id ?? null);
-      const systemId = tipo === 'setor' ? null : id; // registro por sub-setor → vincula o usuário ao sub-setor
-      const { data: inserted, error } = await api.from('users').insert([{
-        name: form.name, email: form.email, password: form.password,
-        role: papel, setor_id: setorId, system_id: systemId,
-        avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${form.email}`
-      }]);
-      if (error) throw new Error(error.message);
-      // Quem atende entra como responsável (por ID) do setor/sub-setor
-      const newId = Array.isArray(inserted) ? inserted[0]?.id : inserted?.id;
-      if (papel === 'responsavel_subsetor' && target && newId) {
-        const table = tipo === 'setor' ? 'setores' : 'systems';
-        const resp = Array.isArray(target.primary_responsibles) ? target.primary_responsibles : [];
-        if (!resp.includes(newId)) {
-          await api.from(table).update({ primary_responsibles: [...resp, newId] }).eq('id', id);
-        }
-      }
+      // Auto-registro público via rota dedicada (escrever em users pelo /api/data é só admin agora)
+      const res = await fetch('/api/register', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: form.name, email: form.email, password: form.password, tipo, id, papel }),
+      });
+      const j = await res.json();
+      if (!res.ok || !j.ok) throw new Error(j.error || 'Falha no cadastro.');
       setDone(true);
       playSound('success');
     } catch (err) {
-      toast.error('Erro ao cadastrar: ' + (err.message?.includes('Duplicate') ? 'e-mail já cadastrado.' : err.message));
+      toast.error('Erro ao cadastrar: ' + err.message);
     } finally {
       setSubmitting(false);
     }
@@ -965,6 +1074,12 @@ export default function App() {
       await api.from('users').update({ is_online: false }).eq('id', user.id);
     }
     await logAction(0, 'USER_LOGOUT', null, 'Saída do Sistema');
+    // apaga a sessão no servidor + o token local
+    try {
+      const token = localStorage.getItem('sessionToken');
+      await fetch('/api/logout', { method: 'POST', headers: { 'x-session-token': token || '' } });
+    } catch (e) {}
+    localStorage.removeItem('sessionToken');
     setUser(null);
     setView('tickets');
     window.location.hash = '#/login';
@@ -1290,6 +1405,11 @@ export default function App() {
   // (includeOwn=false: ignora o "abri este ticket"; admin/escopo/compartilhado seguem valendo)
   const kanbanTickets = filteredTickets.filter(t => canSeeTicket(t, user, setoresList, systemsList, false));
 
+  // Rota pública de redefinição de senha (link do e-mail)
+  if (hash.startsWith('#/reset/')) {
+    return <ResetScreen hash={hash} theme={theme} />;
+  }
+
   // Rota pública de auto-registro por link (escapa do login obrigatório)
   if (!user && hash.startsWith('#/registro/')) {
     return <RegistroScreen hash={hash} theme={theme} />;
@@ -1304,10 +1424,9 @@ export default function App() {
             {theme === 'light' ? <Moon size={24} /> : <Sun size={24} />}
           </button>
         </div>
-        <LoginScreen theme={theme} onLogin={async (userData) => {
-          await api.from('users').update({ is_online: true }).eq('id', userData.id);
+        <LoginScreen theme={theme} onLogin={(userData) => {
+          // /api/login já marcou is_online + registrou o log com IP; aqui só guarda a sessão
           localStorage.setItem('currentUser', JSON.stringify(userData));
-          await logAction(0, 'USER_LOGIN', null, 'Acesso Autorizado');
           setUser(userData);
           window.location.hash = '';
         }} />

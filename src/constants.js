@@ -33,11 +33,11 @@ export const PLATFORMS = [
   { id: 'infra', name: 'Infra/Outros', primary_responsibles: ['William'] },
 ];
 
+// Colunas PADRÃO do Kanban (4). Gerentes de setor/sub-setor adicionam colunas custom além destas.
 export const DEV_STATUS = [
   { id: 'backlog', name: 'Pedidos', userStatus: 'aberto', userStatusName: 'Aberto', color: '#6366f1' },
   { id: 'analise', name: 'Análise', userStatus: 'pendente', userStatusName: 'Em Análise', color: '#3b82f6' },
   { id: 'resolvendo', name: 'Resolvendo', userStatus: 'pendente', userStatusName: 'Pendente', color: '#f59e0b' },
-  { id: 'em_teste', name: 'Em Teste', userStatus: 'pendente', userStatusName: 'Pendente', color: '#8b5cf6' },
   { id: 'resolvido', name: 'Resolvido', userStatus: 'resolvido', userStatusName: 'Resolvido', color: '#10b981' },
 ];
 

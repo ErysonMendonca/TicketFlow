@@ -128,6 +128,11 @@ async function run() {
     }
     if (semPlatform.length) console.log(`   (tickets sem platform nem setor ficam null — legado sem sub-setor: ${semPlatform.map(t => '#'+t.id).join(', ')})`);
 
+    // ---- 4.1) Kanban 4 colunas padrão: "Em Teste" saiu do padrão → mover tickets presos pra "Resolvendo" ----
+    const [emTeste] = await conn.query("SELECT COUNT(*) c FROM tickets WHERE status='em_teste'");
+    console.log(`\n4.1) tickets em 'em_teste' (coluna removida do padrão) → 'resolvendo': ${emTeste[0].c}`);
+    if (APPLY && emTeste[0].c > 0) await conn.query("UPDATE tickets SET status='resolvendo' WHERE status='em_teste'");
+
     if (APPLY) { await conn.commit(); console.log('\n>> dados COMMITados.'); }
 
     // ---- 5) integridade (DDL — auto-commit; roda após os dados) ----

@@ -1757,7 +1757,7 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
   const [novaColuna, setNovaColuna] = useState(null); // { alvo:'setores:1'|'systems:2', nome, cor } | null
 
   // Drag-and-drop nas etapas finais (Pedidos/Análise seguem o fluxo por passos) + colunas customizadas
-  const DRAG_STAGES = ['resolvendo', 'em_teste', 'resolvido'];
+  const DRAG_STAGES = ['resolvendo', 'resolvido'];
 
   const hexToRgb = (hex) => {
     if (!hex) return '0,0,0';
@@ -3683,6 +3683,23 @@ function ConfigView() {
             Em modo teste (remetente <code>onboarding@resend.dev</code>) o Resend só entrega para o e-mail da conta. Para enviar aos responsáveis dos setores, verifique um domínio no Resend e use um remetente dele.
           </p>
         </div>
+      </div>
+
+      {/* Manual de configuração do Resend */}
+      <div className="glass" style={{ padding: '1.75rem', border: '1px solid var(--glass-border)', marginTop: '1.5rem' }}>
+        <h3 style={{ margin: '0 0 4px', fontSize: '1.1rem', fontWeight: 800 }}>Como configurar o e-mail (Resend)</h3>
+        <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', margin: '0 0 1.25rem' }}>Passo a passo para o sistema enviar e-mails aos responsáveis dos setores.</p>
+        <ol style={{ margin: 0, paddingLeft: '1.2rem', display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '0.88rem', lineHeight: 1.6, color: 'var(--text-main)' }}>
+          <li><b>Crie uma conta</b> em <a href="https://resend.com" target="_blank" rel="noreferrer" style={{ color: 'var(--primary)' }}>resend.com</a> (plano gratuito basta).</li>
+          <li><b>Verifique o seu domínio:</b> no painel do Resend → <i>Domains</i> → <i>Add Domain</i> → informe seu domínio (ex.: <code>tynketech.com</code>). O Resend mostrará registros <b>SPF</b> e <b>DKIM</b> — adicione-os no DNS do domínio (onde ele foi registrado) e aguarde a verificação ficar verde. <span style={{ color: 'var(--text-muted)' }}>Sem domínio verificado, os e-mails só chegam ao dono da conta (modo teste).</span></li>
+          <li><b>Gere a API Key:</b> painel → <i>API Keys</i> → <i>Create API Key</i> → copie o valor que começa com <code>re_</code>.</li>
+          <li><b>Preencha aqui em cima:</b> cole a <b>API Key</b> no campo acima e defina o <b>Remetente</b> com um endereço do seu domínio, no formato <code>TicketFlow &lt;chamados@seudominio.com&gt;</code>. Clique em <b>Salvar configuração</b>.</li>
+          <li><b>Teste:</b> use o campo <i>“Enviar e-mail de teste”</i> acima com um endereço qualquer — se chegar, está tudo certo.</li>
+          <li><b>Escolha os eventos:</b> em <i>“Quando enviar e-mail”</i> ligue/desligue as notificações de criação, alteração e mensagens do chat.</li>
+        </ol>
+        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '1.25rem', paddingTop: '1rem', borderTop: '1px solid var(--glass-border)' }}>
+          A chave fica guardada apenas no servidor (banco), nunca é exibida de volta nem enviada ao navegador. Para trocar depois, basta colar uma nova aqui.
+        </p>
       </div>
     </div>
   );

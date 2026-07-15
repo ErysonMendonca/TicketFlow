@@ -1,17 +1,43 @@
 import { NextResponse } from 'next/server';
 import { pool } from '@/lib/db.js';
+import { usuarioDaSessao, hashSenha } from '@/lib/auth.js';
 
 export async function POST(request) {
   try {
     const body = await request.json();
-    console.log('API Request:', body.action, 'on table:', body.table);
     const { action, table, cols = '*', data, filters = [], order, limit, single } = body;
 
-    // Proteção super básica contra SQL Injection no nome da tabela e chamadas indesejadas
+    // Proteção básica contra SQL Injection no nome da tabela e chamadas indesejadas
     const allowedTables = ['users', 'setores', 'systems', 'tickets', 'system_logs', 'ticket_messages'];
     if (!allowedTables.includes(table)) {
-      console.warn('Tabela não permitida:', table);
       return NextResponse.json({ error: 'Tabela não permitida' }, { status: 400 });
+    }
+
+    // --- AUTENTICAÇÃO: nada é acessível sem login ---
+    const usuario = await usuarioDaSessao(request);
+    if (!usuario) return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
+    const admin = usuario.role === 'admin';
+
+    // --- AUTORIZAÇÃO POR CARGO (o que seu cargo não alcança é bloqueado no servidor) ---
+    const semPermissao = () => NextResponse.json({ error: 'Sem permissão para esta ação.' }, { status: 403 });
+    // Escrever em setores/systems: só admin
+    if (['setores', 'systems'].includes(table) && action !== 'select' && !admin) return semPermissao();
+    // Escrever em users: só admin — exceto a PRÓPRIA linha (is_online / perfil)
+    if (table === 'users' && action !== 'select' && !admin) {
+      const alvo = filters.find(f => f.type === 'eq' && f.col === 'id')?.val;
+      if (String(alvo) !== String(usuario.id)) return semPermissao();
+    }
+    // Ler logs do sistema: só admin
+    if (table === 'system_logs' && action === 'select' && !admin) return semPermissao();
+
+    // Nunca gravar senha em texto puro: faz hash em qualquer escrita de users
+    if (table === 'users' && ['insert', 'update', 'upsert'].includes(action) && data) {
+      const items = Array.isArray(data) ? data : [data];
+      for (const it of items) {
+        if (it && typeof it.password === 'string' && it.password && !it.password.includes(':')) {
+          it.password = hashSenha(it.password);
+        }
+      }
     }
 
     let query = '';
@@ -139,6 +165,12 @@ export async function POST(request) {
         if (single && Array.isArray(resultData)) {
           resultData = resultData.length > 0 ? resultData[0] : null;
         }
+      }
+
+      // A senha nunca sai do servidor
+      if (table === 'users' && resultData) {
+        if (Array.isArray(resultData)) resultData = resultData.map(({ password, ...r }) => r);
+        else if (typeof resultData === 'object') { const { password, ...r } = resultData; resultData = r; }
       }
 
       return NextResponse.json({ data: resultData, error: null });

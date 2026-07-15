@@ -29,12 +29,21 @@ class ApiQueryBuilder {
 
   async execute() {
     try {
+      const token = (typeof localStorage !== 'undefined') ? localStorage.getItem('sessionToken') : null;
       const res = await fetch('/api/data', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(token ? { 'x-session-token': token } : {}) },
         body: JSON.stringify(this.query)
       });
-      
+
+      // Sessão inválida/expirada → limpa e volta pro login (só se havia sessão, evita loop)
+      if (res.status === 401) {
+        const tinhaSessao = !!token;
+        try { localStorage.removeItem('currentUser'); localStorage.removeItem('sessionToken'); } catch (e) {}
+        if (tinhaSessao && typeof window !== 'undefined') { window.location.hash = '#/login'; window.location.reload(); }
+        return { data: null, error: { message: 'Não autenticado' } };
+      }
+
       const contentType = res.headers.get('content-type');
       if (contentType && contentType.includes('application/json')) {
         const result = await res.json();

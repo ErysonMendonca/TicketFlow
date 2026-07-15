@@ -42,6 +42,8 @@ import {
   RefreshCw,
   ArrowUpDown,
   Link2,
+  Share2,
+  Settings,
   PlusCircle,
   LogIn,
   Eye,
@@ -52,7 +54,8 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import { api } from './lib/api';
 import toast, { Toaster } from 'react-hot-toast';
-import { PLATFORMS, DEV_STATUS, URGENCY_LEVELS, OTHER_STATUS, MOCK_USERS, TICKET_TYPES } from './constants';
+import { PLATFORMS, DEV_STATUS, URGENCY_LEVELS, URGENCIA_MAXIMA, OTHER_STATUS, MOCK_USERS, TICKET_TYPES, ROLES, ROLE_LABELS, ROLE_COLORS, isManager, BOARD_ROLES } from './constants';
+import { canSeeTicket, colaboradoresDoSetor, podeAtribuir, isColaboradorDoSetor, leadSetorIds, leadSystemIds } from './lib/visibility';
 import { io } from 'socket.io-client';
 
 // WebSocket: em produção conecta no mesmo domínio (proxy Nginx → servidor de socket);
@@ -100,6 +103,7 @@ const saveTickets = (tickets) => {
 const getStorageTheme = () => localStorage.getItem('theme') || 'light';
 const getStorageUser = () => {
   try {
+    if (!localStorage.getItem('sessionToken')) return null; // sem token de sessão → precisa logar
     const saved = localStorage.getItem('currentUser');
     if (!saved || saved === 'undefined') return null;
     return JSON.parse(saved);
@@ -157,6 +161,81 @@ const LoadingSpinner = ({ label = 'Carregando informações...' }) => (
 // --- Tela de Login (sequência animada + glassmorphism dark) ---
 // Sequência (~2.5s): logo girando com pingos d'água → nome surge → conjunto sobe/encolhe → form desliza → botão fade.
 // Só transform/opacity nas animações (60fps, sem reflow).
+// Tela pública de redefinição de senha (via link do e-mail: #/reset/<token>)
+function ResetScreen({ hash }) {
+  const token = hash.replace(/^#\/?reset\//, '').split('/')[0];
+  const [senha, setSenha] = useState('');
+  const [senha2, setSenha2] = useState('');
+  const [showP, setShowP] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [done, setDone] = useState(false);
+  const [erro, setErro] = useState('');
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  const submeter = async (e) => {
+    e.preventDefault();
+    setErro('');
+    if (senha.length < 4) { setErro('A senha deve ter pelo menos 4 caracteres.'); return; }
+    if (senha !== senha2) { setErro('As senhas não conferem.'); return; }
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/reset-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token, password: senha }) });
+      const j = await res.json();
+      if (!res.ok || !j.ok) throw new Error(j.error || 'Não foi possível redefinir a senha.');
+      setDone(true); playSound('success');
+    } catch (err) { setErro(err.message); }
+    finally { setSubmitting(false); }
+  };
+
+  if (!mounted) return null;
+  return (
+    <div className="tt-login">
+      <div className="tt-card" style={{ minHeight: 440 }}>
+        <div className="tt-card-glass" style={{ opacity: 1 }} />
+        <div className="tt-card-inner" style={{ justifyContent: 'center' }}>
+          <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', justifyContent: 'center', marginBottom: '1.25rem' }}>
+              <img src="/TynkeTech.png" alt="TynkeTech" style={{ width: 36, height: 36 }} />
+              <span className="tt-name" style={{ fontSize: '1.3rem' }}>TynkeTech</span>
+            </div>
+            {done ? (
+              <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                <CheckCircle size={44} color="#10b981" style={{ margin: '0 auto' }} />
+                <h1 className="tt-reg-title">Senha redefinida!</h1>
+                <p className="tt-reg-text">Você já pode entrar com a nova senha.</p>
+                <button className="tt-submit" onClick={() => { window.location.hash = '#/login'; }}>Ir para o login</button>
+              </div>
+            ) : (
+              <form className="tt-form" onSubmit={submeter}>
+                <h1 className="tt-reg-title" style={{ textAlign: 'center' }}>Nova senha</h1>
+                <div className="tt-field">
+                  <label>Nova senha</label>
+                  <div className="tt-pass">
+                    <Lock size={18} className="tt-pass-icon" />
+                    <input type={showP ? 'text' : 'password'} value={senha} onChange={e => setSenha(e.target.value)} placeholder="Crie uma senha" required />
+                    <button type="button" className="tt-eye" onClick={() => setShowP(v => !v)} aria-label="Mostrar senha">{showP ? <EyeOff size={18} /> : <Eye size={18} />}</button>
+                  </div>
+                </div>
+                <div className="tt-field">
+                  <label>Confirmar senha</label>
+                  <div className="tt-pass">
+                    <Lock size={18} className="tt-pass-icon" />
+                    <input type={showP ? 'text' : 'password'} value={senha2} onChange={e => setSenha2(e.target.value)} placeholder="Repita a senha" required />
+                  </div>
+                </div>
+                {erro && <p className="tt-error">{erro}</p>}
+                <button type="submit" className="tt-submit" disabled={submitting}>{submitting ? 'Salvando…' : 'Redefinir senha'}</button>
+                <button type="button" className="tt-ghost" onClick={() => { window.location.hash = '#/login'; }}>Voltar ao login</button>
+              </form>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function LoginScreen({ onLogin }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -164,6 +243,9 @@ function LoginScreen({ onLogin }) {
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [phase, setPhase] = useState(0); // 0 carregando · 1 marca · 2 reposiciona · 3 formulário
+  const [esqueceu, setEsqueceu] = useState(false);
+  const [resetEnviado, setResetEnviado] = useState(false);
+  const [enviandoReset, setEnviandoReset] = useState(false);
 
   useEffect(() => {
     // Introdução mais lenta e sentida (~2s girando → revela → sobe → form)
@@ -180,14 +262,28 @@ function LoginScreen({ onLogin }) {
     setError('');
     setIsLoading(true);
     try {
-      const { data, error: dbError } = await api
-        .from('users').select('*').eq('email', email).eq('password', password).single();
-      if (dbError || !data) throw new Error('Email ou senha incorretos.');
-      onLogin(data);
+      const res = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) });
+      const j = await res.json();
+      if (!res.ok || !j.user) throw new Error(j.error || 'E-mail ou senha incorretos.');
+      localStorage.setItem('sessionToken', j.token);
+      onLogin(j.user);
     } catch (err) {
       setError(err.message);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const enviarReset = async (e) => {
+    e.preventDefault();
+    setEnviandoReset(true);
+    try {
+      await fetch('/api/forgot-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) });
+      setResetEnviado(true);
+    } catch (err) {
+      setResetEnviado(true); // não revela se o e-mail existe
+    } finally {
+      setEnviandoReset(false);
     }
   };
 
@@ -245,6 +341,28 @@ function LoginScreen({ onLogin }) {
           {/* Formulário — entra escalonado; botão faz fade por último */}
           <AnimatePresence>
             {phase >= 3 && (
+              esqueceu ? (
+                <div className="tt-form">
+                  {resetEnviado ? (
+                    <>
+                      <p className="tt-reg-text" style={{ textAlign: 'center', lineHeight: 1.6 }}>Se houver uma conta com esse e-mail, enviamos um link para redefinir a senha. Verifique a caixa de entrada (e o spam).</p>
+                      <button type="button" className="tt-submit" onClick={() => { setEsqueceu(false); setResetEnviado(false); }}>Voltar ao login</button>
+                    </>
+                  ) : (
+                    <form className="tt-form" onSubmit={enviarReset}>
+                      <div className="tt-field">
+                        <label>E-mail da conta</label>
+                        <div className="tt-pass">
+                          <Mail size={18} className="tt-pass-icon" />
+                          <input type="email" placeholder="seu@email.com" value={email} onChange={e => setEmail(e.target.value)} required />
+                        </div>
+                      </div>
+                      <button type="submit" className="tt-submit" disabled={enviandoReset}>{enviandoReset ? 'Enviando…' : 'Enviar link de recuperação'}</button>
+                      <button type="button" className="tt-ghost" onClick={() => setEsqueceu(false)}>Voltar ao login</button>
+                    </form>
+                  )}
+                </div>
+              ) : (
               <motion.form className="tt-form" onSubmit={handleLogin} variants={stagger} initial="hidden" animate="show">
                 <motion.div className="tt-field" variants={slideItem}>
                   <label>E-mail</label>
@@ -267,8 +385,12 @@ function LoginScreen({ onLogin }) {
                 <motion.button type="submit" className="tt-submit" variants={fadeItem} disabled={isLoading}>
                   {isLoading ? 'Autenticando…' : 'Entrar'}
                 </motion.button>
+                <motion.button type="button" className="tt-ghost" variants={fadeItem} onClick={() => { setError(''); setEsqueceu(true); }} style={{ marginTop: '-2px' }}>
+                  Esqueceu a senha?
+                </motion.button>
                 <motion.div className="tt-foot" variants={fadeItem}>© 2026 TynkeTech · Powered by Zaya Software</motion.div>
               </motion.form>
+              )
             )}
           </AnimatePresence>
         </div>
@@ -282,7 +404,8 @@ function RegistroScreen({ hash }) {
   const parts = hash.replace(/^#\/?/, '').split('/'); // ['registro','setor','2','user']
   const tipo = parts[1];                 // 'setor' | 'categoria'
   const id = Number(parts[2]);
-  const papel = parts[3] === 'dev' ? 'dev' : 'user';
+  // atende → responsavel_subsetor; senão abre chamados → funcionario. Aceita links antigos ('dev'/'user').
+  const papel = (parts[3] === 'dev' || parts[3] === 'responsavel_subsetor') ? 'responsavel_subsetor' : 'funcionario';
 
   const [target, setTarget] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -317,25 +440,17 @@ function RegistroScreen({ hash }) {
     if (!form.name || !form.email || !form.password) { toast.error('Preencha nome, e-mail e senha.'); return; }
     setSubmitting(true);
     try {
-      const setorId = tipo === 'setor' ? id : (target?.setor_id ?? null);
-      const { error } = await api.from('users').insert([{
-        name: form.name, email: form.email, password: form.password,
-        role: papel, setor_id: setorId,
-        avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${form.email}`
-      }]);
-      if (error) throw new Error(error.message);
-      // Quem atende (dev) entra como responsável do setor/categoria
-      if (papel === 'dev' && target) {
-        const table = tipo === 'setor' ? 'setores' : 'systems';
-        const resp = Array.isArray(target.primary_responsibles) ? target.primary_responsibles : [];
-        if (!resp.includes(form.name)) {
-          await api.from(table).update({ primary_responsibles: [...resp, form.name] }).eq('id', id);
-        }
-      }
+      // Auto-registro público via rota dedicada (escrever em users pelo /api/data é só admin agora)
+      const res = await fetch('/api/register', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: form.name, email: form.email, password: form.password, tipo, id, papel }),
+      });
+      const j = await res.json();
+      if (!res.ok || !j.ok) throw new Error(j.error || 'Falha no cadastro.');
       setDone(true);
       playSound('success');
     } catch (err) {
-      toast.error('Erro ao cadastrar: ' + (err.message?.includes('Duplicate') ? 'e-mail já cadastrado.' : err.message));
+      toast.error('Erro ao cadastrar: ' + err.message);
     } finally {
       setSubmitting(false);
     }
@@ -364,7 +479,7 @@ function RegistroScreen({ hash }) {
     return (
       <>
         <p className="tt-reg-sub">
-          {tipo === 'categoria' ? 'Sub-Setor' : 'Setor'}: <strong>{target.name}</strong> · {papel === 'dev' ? 'atende os chamados' : 'abre chamados'}
+          {tipo === 'categoria' ? 'Sub-Setor' : 'Setor'}: <strong>{target.name}</strong> · {papel === 'responsavel_subsetor' ? 'atende os chamados' : 'abre chamados'}
         </p>
         <form className="tt-form" onSubmit={handleSubmit}>
           <div className="tt-field">
@@ -459,7 +574,7 @@ function RegistroScreen({ hash }) {
 function RegistroLinkModal({ tipo, target, onClose }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
-  const [papel, setPapel] = useState('user');
+  const [papel, setPapel] = useState('funcionario');
   if (!mounted) return null;
   const link = `${window.location.origin}/#/registro/${tipo}/${target.id}/${papel}`;
   const copiar = async () => {
@@ -483,8 +598,8 @@ function RegistroLinkModal({ tipo, target, onClose }) {
         <div className="form-group">
           <label style={{ fontSize: '0.75rem' }}>Quem entrar por este link será…</label>
           <select value={papel} onChange={e => setPapel(e.target.value)}>
-            <option value="user">Usuário que abre chamados</option>
-            <option value="dev">Membro que atende (vira responsável)</option>
+            <option value="funcionario">Funcionário que abre chamados</option>
+            <option value="responsavel_subsetor">Membro que atende (vira responsável)</option>
           </select>
         </div>
 
@@ -506,16 +621,19 @@ function RegistroLinkModal({ tipo, target, onClose }) {
 function AppHeader({ currentView, setView, user, theme, toggleTheme, onLogout }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   
+  const role = user?.role || 'guest';
+  const manageRoles = ROLES.filter(r => r !== 'funcionario'); // admin + gerente + responsáveis
+
   const menus = [
-    { id: 'tickets', name: 'Tickets', icon: <UserIcon size={18} />, roles: ['user', 'dev', 'admin'] },
-    { id: 'kanban', name: 'Kanban', icon: <LayoutDashboard size={18} />, roles: ['admin', 'dev'] },
-    { id: 'analytics', name: 'Analytics', icon: <BarChart3 size={18} />, roles: ['admin'] },
+    { id: 'tickets', name: 'Tickets', icon: <UserIcon size={18} />, roles: ROLES },
+    { id: 'kanban', name: 'Kanban', icon: <LayoutDashboard size={18} />, roles: manageRoles },
+    { id: 'analytics', name: 'Analytics', icon: <BarChart3 size={18} />, roles: manageRoles },
     { id: 'users', name: 'Usuários', icon: <Users size={18} />, roles: ['admin'] },
     { id: 'setores', name: 'Setores', icon: <Layers size={18} />, roles: ['admin'] },
     { id: 'logs', name: 'Logs', icon: <Activity size={18} />, roles: ['admin'] },
+    { id: 'config', name: 'Config', icon: <Settings size={18} />, roles: ['admin'] },
   ];
 
-  const role = user?.role || 'guest';
   const visibleMenus = menus.filter(m => m.roles.includes(role));
 
   return (
@@ -577,7 +695,7 @@ function AppHeader({ currentView, setView, user, theme, toggleTheme, onLogout })
                       >
                         <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--glass-border)', marginBottom: '4px' }}>
                           <div style={{ fontSize: '0.85rem', fontWeight: '700' }}>{user.name}</div>
-                          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>{user.role}</div>
+                          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>{ROLE_LABELS[user.role] || user.role}</div>
                         </div>
                         
                         <button className="menu-item" onClick={() => { setView('profile'); setIsMenuOpen(false); }}>
@@ -722,7 +840,7 @@ export default function App() {
     // Ouvir novos tickets em tempo real
     socket.on('new_ticket_alert', (newTicket) => {
       // Se for admin ou o dev responsável (ou livre), notifica
-      if (user?.role === 'admin' || user?.role === 'dev') {
+      if (isManager(user?.role)) {
         playSound('notification');
         toast.success(`🔔 Novo Ticket: #${newTicket.id} - ${newTicket.title}`, {
           duration: 8000,
@@ -738,7 +856,7 @@ export default function App() {
 
     socket.on('new_mention_alert', (data) => {
       // Toca o som de notificação para todos os Devs/Admins
-      if (user?.role === 'admin' || user?.role === 'dev') {
+      if (isManager(user?.role)) {
         playSound('notification');
         toast(`📍 @${data.mentioned} foi mencionado no Ticket #${data.ticketId}!`, {
           duration: 10000,
@@ -776,6 +894,17 @@ export default function App() {
       }
     });
 
+    // Chat da demanda: avisa o destinatário (criador ↔ responsável) quando não está com o ticket aberto
+    socket.on('new_ticket_message', (data) => {
+      if (data.toUserId === user?.id) {
+        playSound('notification');
+        toast(`💬 Nova mensagem no Ticket #${data.ticketId}`, {
+          duration: 6000, position: 'bottom-right',
+          style: { background: '#4f46e5', color: 'white', fontWeight: 'bold' }
+        });
+      }
+    });
+
     // Feedback sonoro global para cliques
     const handleGlobalClick = (e) => {
       const target = e.target.closest('button, a, select, .kanban-card, .ticket-card, .sidebar-item, input[type="submit"]');
@@ -799,12 +928,61 @@ export default function App() {
       socket.off('new_ticket_alert');
       socket.off('ticket_status_refreshed');
       socket.off('users_refreshed');
+      socket.off('new_ticket_message');
     };
   }, [user]);
 
-  // Ao logar, o dev cai no Kanban por padrão; depois pode navegar (Tickets/Kanban) livremente
+  // Notificações de atribuição flexível (dependem de setores/systems p/ saber se sou colaborador do setor)
   useEffect(() => {
-    if (user?.role === 'dev') setView('kanban');
+    const onAssigned = (data) => {
+      if (data.toUserId === user?.id) {
+        playSound('notification');
+        toast(`📌 Você recebeu a demanda #${data.ticketId}${data.title ? ' - ' + data.title : ''}`, {
+          duration: 8000, position: 'top-right',
+          style: { background: 'var(--primary)', color: 'white', fontWeight: 'bold' }
+        });
+        fetchTickets();
+      }
+    };
+    const onBroadcast = (data) => {
+      if (data.from !== user?.name && isColaboradorDoSetor(user, data.setorId, setoresList, systemsList)) {
+        playSound('notification');
+        toast(`📢 Demanda #${data.ticketId} disponível no setor ${data.setorName || ''} — pode pegar!`, {
+          duration: 9000, position: 'top-center', icon: '📢',
+          style: { background: '#0ea5e9', color: 'white', fontWeight: '800' }
+        });
+        fetchTickets();
+      }
+    };
+    socket.on('ticket_assigned_alert', onAssigned);
+    socket.on('ticket_broadcast_alert', onBroadcast);
+    return () => { socket.off('ticket_assigned_alert', onAssigned); socket.off('ticket_broadcast_alert', onBroadcast); };
+  }, [user, setoresList, systemsList]);
+
+  // Urgência máxima: notifica o RECEBEDOR continuamente enquanto a demanda dele estiver aberta (a cada 2 min)
+  const ticketsRef = React.useRef(tickets);
+  useEffect(() => { ticketsRef.current = tickets; }, [tickets]);
+  useEffect(() => {
+    if (!user) return;
+    const fechados = ['resolvido', 'negado', 'repassado'];
+    const lembrar = () => {
+      (ticketsRef.current || [])
+        .filter(t => t.urgency === URGENCIA_MAXIMA && t.responsible === user.name && !fechados.includes(t.status))
+        .forEach(t => {
+          playSound('notification');
+          toast(`🚨 URGÊNCIA MÁXIMA — Demanda #${t.id}: ${t.title}`, {
+            duration: 7000, position: 'top-right',
+            style: { background: '#b91c1c', color: 'white', fontWeight: 800 }
+          });
+        });
+    };
+    const id = setInterval(lembrar, 120000);
+    return () => clearInterval(id);
+  }, [user]);
+
+  // Ao logar, quem atende (gerente/responsáveis) cai no Kanban; depois navega livremente. Admin/funcionário começam em Tickets.
+  useEffect(() => {
+    if (BOARD_ROLES.includes(user?.role)) setView('kanban');
   }, [user]);
 
   const fetchLogs = async () => {
@@ -896,6 +1074,12 @@ export default function App() {
       await api.from('users').update({ is_online: false }).eq('id', user.id);
     }
     await logAction(0, 'USER_LOGOUT', null, 'Saída do Sistema');
+    // apaga a sessão no servidor + o token local
+    try {
+      const token = localStorage.getItem('sessionToken');
+      await fetch('/api/logout', { method: 'POST', headers: { 'x-session-token': token || '' } });
+    } catch (e) {}
+    localStorage.removeItem('sessionToken');
     setUser(null);
     setView('tickets');
     window.location.hash = '#/login';
@@ -929,18 +1113,25 @@ export default function App() {
         }
       }
 
+      // Rede de segurança: se não veio setor explícito mas veio sub-setor, deriva o setor do sub-setor
+      // (garante que nenhum ticket nasça sem setor_id quando há platform — mantém o banco redondo).
+      const subSetorEscolhido = formData.platform
+        ? systemsList.find(s => String(s.id) === String(formData.platform))
+        : null;
+      const setorDestino = formData.setor ? Number(formData.setor) : (subSetorEscolhido?.setor_id ?? null);
+
       const { data, error } = await api
         .from('tickets')
         .insert([{
           title: formData.title,
           description: formData.description,
-          setor_id: formData.setor ? Number(formData.setor) : null,
+          setor_id: setorDestino,
           origin_setor_id: user?.setor_id || null, // setor de origem = setor de quem abriu
-          platform: formData.platform || null, // id da categoria (só quando o setor ramifica)
+          platform: formData.platform || null, // id do sub-setor (só quando o setor ramifica)
           responsible: formData.responsible || null,
           attachments: uploadedAttachments,
           status: 'backlog',
-          urgency: 'leve',
+          urgency: formData.urgency || 'leve',
           created_by: user?.id || null
         }])
         .select();
@@ -948,6 +1139,19 @@ export default function App() {
       if (error) throw new Error('Erro no banco: ' + error.message);
 
       await logAction(data[0].id, 'TICKET_CREATED', null, 'backlog');
+      // Notificação inicial: e-mail automático pros responsáveis do setor de destino (a demanda é do setor)
+      enviarEmail(
+        emailsDosResponsaveis(data[0]),
+        `Nova demanda #${data[0].id} — ${data[0].title}`,
+        {
+          cabecalho: 'Notificação de Ticket', icone: '✉️', ticketId: data[0].id,
+          titulo: `#${data[0].id} — ${data[0].title}`,
+          descricao: (data[0].description || '—').slice(0, 500),
+          situacao: 'Aberto', situacaoCor: '#6366f1',
+          assinatura: `Aberto por ${user?.name || '—'}`,
+        },
+        'ticket_criado'
+      );
       return data[0];
     };
 
@@ -967,6 +1171,24 @@ export default function App() {
         return `Erro: ${err.message}`;
       }
     });
+  };
+
+  // Notificação por e-mail (fire-and-forget; template branded renderizado no servidor a partir do `email` estruturado)
+  const enviarEmail = (to, subject, email, evento) => {
+    const recipients = (Array.isArray(to) ? to : [to]).filter(Boolean);
+    if (recipients.length === 0) return;
+    fetch('/api/notify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: recipients, subject, email, evento }) })
+      .catch(e => console.warn('Falha ao notificar por e-mail:', e));
+  };
+
+  // E-mails dos responsáveis do setor de destino (+ do sub-setor, se houver) — a demanda é do setor, não de um indivíduo
+  const emailsDosResponsaveis = (ticket) => {
+    const ids = new Set();
+    const setor = setoresList.find(s => s.id === ticket.setor_id);
+    (Array.isArray(setor?.primary_responsibles) ? setor.primary_responsibles : []).forEach(id => ids.add(id));
+    const sys = systemsList.find(s => String(s.id) === String(ticket.platform));
+    (Array.isArray(sys?.primary_responsibles) ? sys.primary_responsibles : []).forEach(id => ids.add(id));
+    return [...ids].map(id => allUsers.find(u => u.id === id)?.email).filter(Boolean);
   };
 
   const updateTicketDetails = async (ticketIdRaw, updates) => {
@@ -1010,6 +1232,29 @@ export default function App() {
           socket.emit('ticket_shared', { ticketId, sharedWith: newShares, title: oldTicket.title });
         }
       }
+
+      // Notificação de alteração: o remetente (criador) é avisado por e-mail quando OUTRO altera a demanda
+      if (oldTicket && user?.id !== oldTicket.created_by) {
+        const criador = allUsers.find(u => u.id === oldTicket.created_by);
+        if (criador?.email) {
+          enviarEmail(
+            criador.email,
+            `Atualização na sua demanda #${ticketId}`,
+            (() => {
+              const sid = updates.status !== undefined ? updates.status : oldTicket.status;
+              const si = DEV_STATUS.find(s => s.id === sid);
+              return {
+                cabecalho: 'Atualização de Ticket', icone: '🔄', ticketId,
+                titulo: `#${ticketId} — ${oldTicket.title}`,
+                descricao: updates.responsible !== undefined ? `Responsável: ${updates.responsible || 'Sem responsável'}` : undefined,
+                situacao: si?.name || sid, situacaoCor: si?.color || '#0ea5e9',
+                assinatura: `Atualizado por ${user?.name || 'a equipe'}`,
+              };
+            })(),
+            'ticket_alterado'
+          );
+        }
+      }
     };
 
     toast.promise(atualizar(), {
@@ -1045,6 +1290,19 @@ export default function App() {
 
       if (oldTicket && oldTicket.status !== newStatus) {
         await logAction(ticketId, 'STATUS_CHANGED', oldTicket.status, newStatus);
+        // Notificação de alteração: avisa o remetente (criador) por e-mail, se quem moveu não for ele
+        if (user?.id !== oldTicket.created_by) {
+          const criador = allUsers.find(u => u.id === oldTicket.created_by);
+          if (criador?.email) {
+            enviarEmail(criador.email, `Atualização na sua demanda #${ticketId}`, {
+              cabecalho: 'Atualização de Ticket', icone: '🔄', ticketId,
+              titulo: `#${ticketId} — ${oldTicket.title}`,
+              situacao: DEV_STATUS.find(s => s.id === newStatus)?.name || newStatus,
+              situacaoCor: DEV_STATUS.find(s => s.id === newStatus)?.color || '#0ea5e9',
+              assinatura: `Atualizado por ${user?.name || 'a equipe'}`,
+            }, 'ticket_alterado');
+          }
+        }
       }
     } catch (err) {
       setTickets(oldTickets); // Rollback
@@ -1095,15 +1353,20 @@ export default function App() {
     const { data } = await api.from('tickets').select('attachments').eq('id', t.id).single();
     setViewingTicket({ ...t, attachments: data?.attachments || [] });
     playSound('open');
-    if (user && (user.role === 'dev' || user.role === 'admin')) {
+    if (isManager(user?.role)) {
       await logAction(t.id, 'TICKET_VIEWED_FIRST_TIME', null, null);
     }
   };
 
   // Passo 1: clique num ticket em Backlog → gate de aceite. Demais → abre os detalhes (passo 2).
   const requestOpenTicket = (t) => {
-    const canManage = user?.role === 'dev' || user?.role === 'admin';
-    if (!canManage) return; // usuários comuns não abrem os detalhes
+    const canManage = isManager(user?.role);
+    if (!canManage) {
+      // solicitante (criador), quem recebeu a demanda (responsável) ou compartilhado abre a visão de leitura + chat, sem gate de aceite
+      const podeVer = t.created_by === user?.id || t.responsible === user?.name || (Array.isArray(t.shared_with) && t.shared_with.includes(user?.id));
+      if (podeVer) openTicketDetails(t);
+      return;
+    }
     if (t.status === 'backlog') { setAcceptGate(t); return; }
     openTicketDetails(t);
   };
@@ -1122,24 +1385,30 @@ export default function App() {
     setAcceptGate(null);
   };
 
-  const visibleTickets = (user?.role === 'dev')
-    ? tickets.filter(t =>
-        t.responsible === user.name ||
-        t.created_by === user.id ||
-        (Array.isArray(t.shared_with) && t.shared_with.includes(user.id))
-      )
-    : tickets;
+  // Deep-link do e-mail: #/ticket/<id> → abre o ticket quando logado e os tickets já carregaram
+  useEffect(() => {
+    const m = hash.match(/^#\/ticket\/(\d+)/);
+    if (!m || !user || tickets.length === 0) return;
+    const t = tickets.find(x => x.id === Number(m[1]));
+    if (t) { requestOpenTicket(t); window.location.hash = ''; }
+  }, [hash, user, tickets]);
+
+  // Visibilidade por hierarquia (setor/sub-setor). ponytail: regra client-side, como o resto do app.
+  const visibleTickets = tickets.filter(t => canSeeTicket(t, user, setoresList, systemsList));
 
   const filteredTickets = visibleTickets.filter(t =>
     t.title.toLowerCase().includes(search.toLowerCase()) ||
     t.id.toString().toLowerCase().includes(search.toLowerCase())
   );
 
-  // No Kanban, quem ENVIA (criou) não vê o ticket — só quem RECEBE (responsável) ou com quem foi compartilhado.
-  // Quem enviou continua vendo o ticket na aba Tickets. (admin vê tudo)
-  const kanbanTickets = (user?.role === 'dev')
-    ? filteredTickets.filter(t => t.responsible === user.name || (Array.isArray(t.shared_with) && t.shared_with.includes(user.id)))
-    : filteredTickets;
+  // No Kanban, quem só ENVIOU (criou, sem atender o escopo) não vê o card — continua vendo na aba Tickets.
+  // (includeOwn=false: ignora o "abri este ticket"; admin/escopo/compartilhado seguem valendo)
+  const kanbanTickets = filteredTickets.filter(t => canSeeTicket(t, user, setoresList, systemsList, false));
+
+  // Rota pública de redefinição de senha (link do e-mail)
+  if (hash.startsWith('#/reset/')) {
+    return <ResetScreen hash={hash} theme={theme} />;
+  }
 
   // Rota pública de auto-registro por link (escapa do login obrigatório)
   if (!user && hash.startsWith('#/registro/')) {
@@ -1155,10 +1424,9 @@ export default function App() {
             {theme === 'light' ? <Moon size={24} /> : <Sun size={24} />}
           </button>
         </div>
-        <LoginScreen theme={theme} onLogin={async (userData) => {
-          await api.from('users').update({ is_online: true }).eq('id', userData.id);
+        <LoginScreen theme={theme} onLogin={(userData) => {
+          // /api/login já marcou is_online + registrou o log com IP; aqui só guarda a sessão
           localStorage.setItem('currentUser', JSON.stringify(userData));
-          await logAction(0, 'USER_LOGIN', null, 'Acesso Autorizado');
           setUser(userData);
           window.location.hash = '';
         }} />
@@ -1196,7 +1464,7 @@ export default function App() {
             >
               {view === 'tickets' ? (
                 <UserDashboard
-                  tickets={user?.role === 'admin' ? filteredTickets : filteredTickets.filter(t => t.created_by === user?.id)}
+                  tickets={filteredTickets}
                   isLoading={loading}
                   onOpenModal={() => setIsModalOpen(true)}
                   search={search}
@@ -1208,9 +1476,9 @@ export default function App() {
                   setores={setoresList}
                 />
               ) : view === 'users' ? (
-                <UsersView user={user} onDeleteUser={handleDeleteUser} fetchUsers={fetchUsersList} allUsers={allUsers} setores={setoresList} />
+                <UsersView user={user} onDeleteUser={handleDeleteUser} fetchUsers={fetchUsersList} allUsers={allUsers} setores={setoresList} systems={systemsList} />
               ) : view === 'setores' ? (
-                <SetoresView user={user} setores={setoresList} systems={systemsList} onUpdate={async () => {
+                <SetoresView user={user} setores={setoresList} systems={systemsList} allUsers={allUsers} onUpdate={async () => {
                   const { data: setData } = await api.from('setores').select('*').order('name');
                   setSetoresList(setData || []);
                   const { data: sysData } = await api.from('systems').select('*');
@@ -1228,11 +1496,19 @@ export default function App() {
                   setores={setoresList}
                   onOpenModal={() => setIsModalOpen(true)}
                   onTicketClick={requestOpenTicket}
+                  onEstruturaChange={async () => {
+                    const { data: setData } = await api.from('setores').select('*').order('name');
+                    setSetoresList(setData || []);
+                    const { data: sysData } = await api.from('systems').select('*');
+                    if (sysData) setSystemsList(sysData);
+                  }}
                 />
               ) : view === 'analytics' ? (
                 <AnalyticsDashboard tickets={filteredTickets} setores={setoresList} />
               ) : view === 'logs' ? (
                 <LogsView />
+              ) : view === 'config' ? (
+                <ConfigView />
               ) : view === 'profile' ? (
                 <ProfileView user={user} onUpdate={(updated) => { setUser(updated); localStorage.setItem('currentUser', JSON.stringify(updated)); setView('tickets'); }} />
               ) : (
@@ -1255,6 +1531,7 @@ export default function App() {
             systems={systemsList}
             setores={setoresList}
             user={user}
+            allUsers={allUsers}
           />
         )}
         {viewingTicket && (
@@ -1359,6 +1636,9 @@ function SkeletonKanbanCard() {
   );
 }
 
+// Urgência máxima vai pro topo da fila de visualização (ordenação estável: máxima primeiro, resto preservado)
+const maximaPrimeiro = (arr) => [...(arr || [])].sort((a, b) => (b.urgency === URGENCIA_MAXIMA ? 1 : 0) - (a.urgency === URGENCIA_MAXIMA ? 1 : 0));
+
 function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, onTicketClick, user, systems, setores, isLoading }) {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
@@ -1399,7 +1679,7 @@ function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, onTi
             Nenhum ticket encontrado.
           </div>
         ) : (
-          tickets.map(ticket => (
+          maximaPrimeiro(tickets).map(ticket => (
             <motion.div
               layout
               key={ticket.id}
@@ -1409,7 +1689,7 @@ function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, onTi
                 display: 'flex', 
                 alignItems: 'center', 
                 justifyContent: 'space-between', 
-                cursor: (user?.role === 'admin' || user?.role === 'dev') ? 'pointer' : 'default',
+                cursor: (isManager(user?.role) || ticket.created_by === user?.id || (Array.isArray(ticket.shared_with) && ticket.shared_with.includes(user?.id))) ? 'pointer' : 'default',
                 borderLeft: isOverdue(ticket) ? '4px solid #ef4444' : (ticket.created_by !== user?.id ? '4px solid var(--primary)' : 'none')
               }}
               onClick={() => onTicketClick(ticket)}
@@ -1421,6 +1701,11 @@ function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, onTi
                 </div>
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {ticket.urgency === URGENCIA_MAXIMA && (
+                      <span style={{ background: '#b91c1c', color: 'white', padding: '1px 6px', borderRadius: '4px', fontSize: '0.6rem', fontWeight: '800', textTransform: 'uppercase' }}>
+                        🚨 Máxima
+                      </span>
+                    )}
                     <h3 style={{ fontSize: '1.1rem', fontWeight: '600', marginBottom: '4px' }}>{ticket.title}</h3>
                     {ticket.created_by !== user?.id && ticket.responsible !== user?.name && Array.isArray(ticket.shared_with) && ticket.shared_with.includes(user?.id) && (
                       <span style={{ background: 'var(--primary)', color: 'white', padding: '1px 6px', borderRadius: '4px', fontSize: '0.6rem', fontWeight: '800', textTransform: 'uppercase' }}>
@@ -1499,7 +1784,7 @@ function sortColumn(arr, key, dir = 'asc') {
     }
     if (key === 'chegada') return sign * (new Date(x.created_at) - new Date(y.created_at));
     if (key === 'alfabetica') return sign * (x.title || '').localeCompare(y.title || '');
-    if (key === 'urgencia') { const r = { leve: 1, moderado: 2, grave: 3 }; return sign * ((r[x.urgency] ?? 0) - (r[y.urgency] ?? 0)); }
+    if (key === 'urgencia') { const r = { leve: 1, moderado: 2, grave: 3, maxima: 4 }; return sign * ((r[x.urgency] ?? 0) - (r[y.urgency] ?? 0)); }
     return 0;
   });
   return a;
@@ -1578,7 +1863,7 @@ function ColumnSortModal({ columnName, tickets, initialKey, initialDir, onApply,
 }
 
 // --- Kanban do Desenvolvedor ---
-function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketClick, systems, setores, allUsers, isLoading, onOpenModal }) {
+function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketClick, systems, setores, allUsers, isLoading, onOpenModal, onEstruturaChange }) {
   const [sortModal, setSortModal] = useState(null);   // id da coluna com modal de ordenação aberto
   const [columnSort, setColumnSort] = useState({});   // { [columnId]: sortKey }
   const [filterSearch, setFilterSearch] = useState('');
@@ -1588,33 +1873,16 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
   const [draggedTicket, setDraggedTicket] = useState(null);
   const [dropTarget, setDropTarget] = useState(null);
 
-  // Drag-and-drop SÓ nas etapas finais (Backlog/Análise seguem o fluxo por passos)
-  const DRAG_STAGES = ['resolvendo', 'em_teste', 'resolvido'];
-  const handleDragStart = (e, ticket) => {
-    if (!DRAG_STAGES.includes(ticket.status)) { e.preventDefault(); return; }
-    setDraggedTicket(ticket);
-    e.dataTransfer.setData('ticketId', ticket.id);
-  };
-  const handleDragOver = (e, columnId) => {
-    if (!draggedTicket || !DRAG_STAGES.includes(columnId)) return;
-    e.preventDefault();
-    setDropTarget(columnId);
-  };
-  const handleDrop = (e, columnId) => {
-    if (!draggedTicket || !DRAG_STAGES.includes(columnId)) return;
-    e.preventDefault();
-    const ticketId = e.dataTransfer.getData('ticketId');
-    if (ticketId && draggedTicket.status !== columnId) onUpdateStatus(ticketId, columnId);
-    setDraggedTicket(null);
-    setDropTarget(null);
-  };
+  const [novaColuna, setNovaColuna] = useState(null); // { alvo:'setores:1'|'systems:2', nome, cor } | null
+
+  // Drag-and-drop nas etapas finais (Pedidos/Análise seguem o fluxo por passos) + colunas customizadas
+  const DRAG_STAGES = ['resolvendo', 'resolvido'];
 
   const hexToRgb = (hex) => {
     if (!hex) return '0,0,0';
     let result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
     return result ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` : '0,0,0';
   };
-
 
   let visibleTickets = tickets;
   if (filterSearch) {
@@ -1630,6 +1898,68 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
   if (filterResponsible) {
     visibleTickets = visibleTickets.filter(t => t.responsible === filterResponsible);
   }
+
+  // --- Colunas customizadas (Caminho 1: base + extras antes de "Resolvido"), por setor e por sub-setor ---
+  const ehAdmin = user?.role === 'admin';
+  const meusSetores = ehAdmin ? setores : setores.filter(s => leadSetorIds(user, setores).includes(s.id));
+  const meusSubsetores = ehAdmin ? systems : systems.filter(s => leadSystemIds(user, systems).includes(s.id));
+  const podeGerenciarColunas = ehAdmin || meusSetores.length > 0 || meusSubsetores.length > 0;
+
+  const setorIdsBoard = new Set(visibleTickets.map(t => t.setor_id).filter(x => x != null));
+  const systemIdsBoard = new Set(visibleTickets.map(t => String(t.platform)).filter(Boolean));
+  const custom = [];
+  setores.forEach(s => { if (setorIdsBoard.has(s.id) || meusSetores.some(m => m.id === s.id)) (Array.isArray(s.colunas) ? s.colunas : []).forEach(c => custom.push({ ...c, _tipo: 'setores', _ownerId: s.id })); });
+  systems.forEach(s => { if (systemIdsBoard.has(String(s.id)) || meusSubsetores.some(m => m.id === s.id)) (Array.isArray(s.colunas) ? s.colunas : []).forEach(c => custom.push({ ...c, _tipo: 'systems', _ownerId: s.id })); });
+  const vistos = new Set();
+  const customUnicas = custom.filter(c => !vistos.has(c.id) && vistos.add(c.id));
+  const idxResolvido = DEV_STATUS.findIndex(c => c.id === 'resolvido');
+  const colunas = [...DEV_STATUS.slice(0, idxResolvido), ...customUnicas, ...DEV_STATUS.slice(idxResolvido)];
+  const idsCustom = new Set(customUnicas.map(c => c.id));
+  const podeArrastar = (id) => DRAG_STAGES.includes(id) || idsCustom.has(id);
+
+  const handleDragStart = (e, ticket) => {
+    if (!podeArrastar(ticket.status)) { e.preventDefault(); return; }
+    setDraggedTicket(ticket);
+    e.dataTransfer.setData('ticketId', ticket.id);
+  };
+  const handleDragOver = (e, columnId) => {
+    if (!draggedTicket || !podeArrastar(columnId)) return;
+    e.preventDefault();
+    setDropTarget(columnId);
+  };
+  const handleDrop = (e, columnId) => {
+    if (!draggedTicket || !podeArrastar(columnId)) return;
+    e.preventDefault();
+    const ticketId = e.dataTransfer.getData('ticketId');
+    if (ticketId && draggedTicket.status !== columnId) onUpdateStatus(ticketId, columnId);
+    setDraggedTicket(null);
+    setDropTarget(null);
+  };
+
+  const salvarColuna = async () => {
+    const [tipo, idStr] = (novaColuna.alvo || '').split(':');
+    const ownerId = Number(idStr);
+    const nome = (novaColuna.nome || '').trim();
+    if (!tipo || !ownerId || !nome) { toast.error('Escolha o setor/sub-setor e dê um nome à coluna.'); return; }
+    const owner = (tipo === 'setores' ? setores : systems).find(x => x.id === ownerId);
+    const atual = Array.isArray(owner?.colunas) ? owner.colunas : [];
+    const nova = { id: 'col_' + Date.now(), name: nome, color: novaColuna.cor || '#6366f1' };
+    const { error } = await api.from(tipo).update({ colunas: [...atual, nova] }).eq('id', ownerId);
+    if (error) { toast.error('Erro ao criar coluna.'); return; }
+    toast.success('Coluna criada!'); playSound('success');
+    setNovaColuna(null);
+    onEstruturaChange && onEstruturaChange();
+  };
+
+  const excluirColuna = async (column) => {
+    if (visibleTickets.some(t => t.status === column.id)) { toast.error('Mova os tickets desta coluna antes de excluir.'); return; }
+    const owner = (column._tipo === 'setores' ? setores : systems).find(x => x.id === column._ownerId);
+    const restantes = (Array.isArray(owner?.colunas) ? owner.colunas : []).filter(c => c.id !== column.id);
+    const { error } = await api.from(column._tipo).update({ colunas: restantes }).eq('id', column._ownerId);
+    if (error) { toast.error('Erro ao excluir coluna.'); return; }
+    toast.success('Coluna excluída.');
+    onEstruturaChange && onEstruturaChange();
+  };
 
   return (
     <div className="animate-in" style={{ display: 'flex', flexDirection: 'column', gap: '1rem', height: '100%' }}>
@@ -1654,8 +1984,14 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
         </select>
         <select style={{ flex: '0 0 160px', margin: 0 }} value={filterResponsible} onChange={e => setFilterResponsible(e.target.value)}>
           <option value="">Responsável</option>
-          {allUsers.filter(u => u.role === 'dev' || u.role === 'admin').map(u => <option key={u.id} value={u.name}>{u.name}</option>)}
+          {allUsers.filter(u => isManager(u.role)).map(u => <option key={u.id} value={u.name}>{u.name}</option>)}
         </select>
+        {podeGerenciarColunas && (
+          <button className="btn btn-ghost" style={{ flex: '0 0 auto', margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}
+            onClick={() => setNovaColuna({ alvo: '', nome: '', cor: '#6366f1' })} title="Criar coluna personalizada no seu setor/sub-setor">
+            <PlusCircle size={16} /> Nova coluna
+          </button>
+        )}
       </div>
 
       <div className="kanban-board-container" style={{ display: 'flex', gap: '1rem', flex: 1, overflowX: 'auto', paddingBottom: '1rem' }}>
@@ -1671,10 +2007,12 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
             </div>
           ))
         ) : (
-          DEV_STATUS.map(column => {
+          colunas.map(column => {
             const cs = columnSort[column.id];
-            const columnTickets = sortColumn(visibleTickets.filter(t => t.status === column.id), cs?.key, cs?.dir);
+            const columnTickets = maximaPrimeiro(sortColumn(visibleTickets.filter(t => t.status === column.id), cs?.key, cs?.dir));
             const isTarget = dropTarget === column.id;
+            const ehCustom = idsCustom.has(column.id);
+            const souDono = ehAdmin || (column._tipo === 'setores' ? meusSetores.some(m => m.id === column._ownerId) : meusSubsetores.some(m => m.id === column._ownerId));
 
             return (
               <div
@@ -1685,7 +2023,10 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
                 style={{ minWidth: '300px', background: 'rgba(0,0,0,0.02)', borderRadius: '12px', padding: '1rem', display: 'flex', flexDirection: 'column' }}
               >
                 <h3 style={{ fontSize: '0.85rem', fontWeight: '700', textTransform: 'uppercase', marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  {column.name}
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
+                    {ehCustom && <span style={{ width: '9px', height: '9px', borderRadius: '50%', background: column.color || '#6366f1', flex: '0 0 auto' }} />}
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{column.name}</span>
+                  </span>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <span>{columnTickets.length}</span>
                     <button
@@ -1696,6 +2037,13 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
                     >
                       <ArrowUpDown size={14} />
                     </button>
+                    {ehCustom && souDono && (
+                      <button className="icon-btn logout" title="Excluir coluna"
+                        onClick={(e) => { e.stopPropagation(); excluirColuna(column); }}
+                        style={{ display: 'flex', alignItems: 'center', padding: '2px' }}>
+                        <X size={14} />
+                      </button>
+                    )}
                   </div>
                 </h3>
 
@@ -1704,7 +2052,7 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
                     const urgencyColor = URGENCY_LEVELS.find(u => u.id === ticket.urgency)?.color || 'transparent';
                     const responsibleUser = allUsers.find(u => u.name === ticket.responsible);
                     const overdue = isOverdue(ticket);
-                    const canDrag = DRAG_STAGES.includes(ticket.status);
+                    const canDrag = podeArrastar(ticket.status);
 
                     return (
                       <motion.div
@@ -1725,6 +2073,11 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', marginBottom: '4px', alignItems: 'center' }}>
                           <span style={{ color: 'var(--primary)', fontWeight: '700' }}>#{ticket.id}</span>
                           <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                            {ticket.urgency === URGENCIA_MAXIMA && (
+                              <span style={{ background: '#b91c1c', color: 'white', padding: '2px 6px', borderRadius: '4px', fontSize: '0.6rem', fontWeight: '800', textTransform: 'uppercase' }}>
+                                🚨 Máxima
+                              </span>
+                            )}
                             {ticket.created_by !== user?.id && ticket.responsible !== user?.name && Array.isArray(ticket.shared_with) && ticket.shared_with.includes(user?.id) && (
                               <span style={{ background: 'var(--primary)', color: 'white', padding: '2px 6px', borderRadius: '4px', fontSize: '0.6rem', fontWeight: '800', textTransform: 'uppercase' }}>
                                 Compartilhado
@@ -1765,7 +2118,7 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
       <AnimatePresence>
         {sortModal && (
           <ColumnSortModal
-            columnName={DEV_STATUS.find(c => c.id === sortModal)?.name}
+            columnName={colunas.find(c => c.id === sortModal)?.name}
             tickets={visibleTickets.filter(t => t.status === sortModal)}
             initialKey={columnSort[sortModal]?.key}
             initialDir={columnSort[sortModal]?.dir}
@@ -1774,6 +2127,35 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
           />
         )}
       </AnimatePresence>
+
+      {novaColuna && createPortal(
+          <div className="overlay" style={{ alignItems: 'center', padding: '1rem' }} onClick={() => setNovaColuna(null)}>
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="glass modal" style={{ width: '440px', maxWidth: '94vw', padding: '1.75rem' }} onClick={e => e.stopPropagation()}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+                <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 800 }}>Nova coluna personalizada</h3>
+                <button onClick={() => setNovaColuna(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={20} /></button>
+              </div>
+              <div className="form-group">
+                <label style={{ fontSize: '0.75rem' }}>Onde a coluna entra (setor ou sub-setor que você gerencia)</label>
+                <select value={novaColuna.alvo} onChange={e => setNovaColuna({ ...novaColuna, alvo: e.target.value })}>
+                  <option value="">Selecione...</option>
+                  {meusSetores.map(s => <option key={`s${s.id}`} value={`setores:${s.id}`}>Setor: {s.name}</option>)}
+                  {meusSubsetores.map(s => <option key={`y${s.id}`} value={`systems:${s.id}`}>Sub-setor: {s.name}</option>)}
+                </select>
+              </div>
+              <div className="form-group">
+                <label style={{ fontSize: '0.75rem' }}>Nome da coluna</label>
+                <input value={novaColuna.nome} onChange={e => setNovaColuna({ ...novaColuna, nome: e.target.value })} placeholder="Ex: Aguardando Deploy" autoFocus />
+              </div>
+              <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <label style={{ fontSize: '0.75rem', margin: 0 }}>Cor</label>
+                <input type="color" value={novaColuna.cor} onChange={e => setNovaColuna({ ...novaColuna, cor: e.target.value })} style={{ width: '48px', height: '32px', padding: 0, border: 'none', background: 'none', cursor: 'pointer' }} />
+              </div>
+              <button className="btn btn-primary" style={{ width: '100%', marginTop: '0.5rem' }} onClick={salvarColuna}>Criar coluna</button>
+            </motion.div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 }
@@ -1864,7 +2246,7 @@ function AnaliseGateModal({ ticket, onConfirm, onViewDetails, onClose }) {
 }
 
 // --- Modal de Criação ---
-function TicketModal({ onClose, onSubmit, systems, setores = [], user }) {
+function TicketModal({ onClose, onSubmit, systems, setores = [], user, allUsers = [] }) {
   // Destino só pode ser OUTRO setor: exclui o setor de origem (o de quem abre)
   const setoresDestino = setores.filter(s => s.id != user?.setor_id);
   const [mounted, setMounted] = useState(false);
@@ -1876,6 +2258,7 @@ function TicketModal({ onClose, onSubmit, systems, setores = [], user }) {
     setor: '',
     platform: '',
     responsible: '',
+    urgency: 'leve', // o solicitante define a urgência (inclui "Máxima")
     files: []
   });
   const [previews, setPreviews] = useState([]);
@@ -1885,9 +2268,12 @@ function TicketModal({ onClose, onSubmit, systems, setores = [], user }) {
   const setorSystems = formData.setor ? systems.filter(s => s.setor_id == formData.setor) : [];
   const setorAtual = setores.find(s => s.id == formData.setor);
   // Responsáveis disponíveis: do sistema (se o setor ramifica) ou da equipe do setor.
-  const respOptions = formData.platform
+  // primary_responsibles agora são IDs → resolver p/ nome (aceita nome legado também)
+  const nomeResp = (v) => (typeof v === 'number' ? (allUsers.find(u => u.id === v)?.name || '') : (v || ''));
+  const respIds = formData.platform
     ? (systems.find(p => p.id == formData.platform)?.primary_responsibles || [])
     : (setorSystems.length === 0 ? (setorAtual?.primary_responsibles || []) : []);
+  const respOptions = respIds.map(nomeResp).filter(Boolean);
 
   const handleSetorChange = (setorId) => {
     const proximosSistemas = systems.filter(s => s.setor_id == setorId);
@@ -1897,7 +2283,7 @@ function TicketModal({ onClose, onSubmit, systems, setores = [], user }) {
       setor: setorId,
       platform: '',
       // setor sem sistemas: já sugere o 1º da equipe; com sistemas: espera escolher o sistema
-      responsible: proximosSistemas.length === 0 ? (setor?.primary_responsibles?.[0] || '') : ''
+      responsible: proximosSistemas.length === 0 ? nomeResp(setor?.primary_responsibles?.[0]) : ''
     });
   };
 
@@ -1906,7 +2292,7 @@ function TicketModal({ onClose, onSubmit, systems, setores = [], user }) {
     setFormData({
       ...formData,
       platform: pId,
-      responsible: platform?.primary_responsibles?.[0] || ''
+      responsible: nomeResp(platform?.primary_responsibles?.[0])
     });
   };
 
@@ -2010,6 +2396,18 @@ function TicketModal({ onClose, onSubmit, systems, setores = [], user }) {
                 {respOptions.map(r => <option key={r} value={r}>{r}</option>)}
               </select>
             </div>
+
+            <div className="form-group">
+              <label>Urgência</label>
+              <select value={formData.urgency} onChange={e => setFormData({ ...formData, urgency: e.target.value })}>
+                {URGENCY_LEVELS.map(u => <option key={u.id} value={u.id}>{u.name}{u.id === URGENCIA_MAXIMA ? ' 🚨' : ''}</option>)}
+              </select>
+              {formData.urgency === URGENCIA_MAXIMA && (
+                <p style={{ fontSize: '0.72rem', color: '#b91c1c', fontWeight: 700, marginTop: '4px' }}>
+                  Urgência máxima: o responsável é notificado continuamente e a demanda vai pro topo da fila.
+                </p>
+              )}
+            </div>
           </div>
 
           <div className="form-group">
@@ -2084,10 +2482,95 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, setores = [], 
     u.name !== ticket.responsible && !sharedWith.includes(u.id)
   );
 
-  // Só responsável/dev (e admin) aceita e define/reagenda a entrega
-  const canManage = user?.role === 'dev' || user?.role === 'admin';
+  // Só quem atende (gerente/responsáveis) e admin aceita e define/reagenda a entrega
+  const canManage = isManager(user?.role);
   const hoje = toDateInput(new Date());
   const vencido = isOverdue(ticket);
+
+  // --- Chat interno da demanda (bate e volta) ---
+  // Postam só o solicitante (criador) e o recebedor (responsável); os demais que enxergam o ticket só leem.
+  // ponytail: gate client-side, como todo o app; /api/data não valida quem posta (frente separada).
+  const [messages, setMessages] = useState([]);
+  const [novaMsg, setNovaMsg] = useState('');
+  const canPost = user?.id === ticket.created_by || user?.name === ticket.responsible;
+
+  const fetchMessages = async () => {
+    const { data } = await api.from('ticket_messages').select('*').eq('ticket_id', ticket.id).order('created_at', { ascending: true });
+    setMessages(Array.isArray(data) ? data : []);
+  };
+  useEffect(() => { fetchMessages(); }, [ticket.id]);
+  useEffect(() => {
+    const onMsg = (d) => { if (String(d.ticketId) === String(ticket.id)) fetchMessages(); };
+    socket.on('new_ticket_message', onMsg);
+    return () => socket.off('new_ticket_message', onMsg);
+  }, [ticket.id]);
+
+  const enviarMsg = async () => {
+    const txt = novaMsg.trim();
+    if (!txt) return;
+    setNovaMsg('');
+    const { error } = await api.from('ticket_messages').insert([{ ticket_id: ticket.id, user_id: user.id, message: txt }]);
+    if (error) { toast.error('Erro ao enviar mensagem.'); return; }
+    await fetchMessages();
+    // avisa o outro lado (criador ↔ responsável) — socket + e-mail (evento "nova_mensagem")
+    const destino = user.id === ticket.created_by ? allUsers.find(u => u.name === ticket.responsible)?.id : ticket.created_by;
+    socket.emit('ticket_message', { ticketId: ticket.id, from: user.name, toUserId: destino });
+    const destinoUser = allUsers.find(u => u.id === destino);
+    if (destinoUser?.email) {
+      fetch('/api/notify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        to: [destinoUser.email],
+        subject: `Nova mensagem na demanda #${ticket.id}`,
+        email: {
+          cabecalho: 'Nova Mensagem', icone: '💬', ticketId: ticket.id,
+          titulo: `#${ticket.id} — ${ticket.title}`,
+          mensagem: txt,
+          assinatura: `De ${user.name}`,
+        },
+        evento: 'nova_mensagem'
+      }) }).catch(() => {});
+    }
+    playSound('success');
+  };
+
+  // --- Atribuição flexível da demanda ---
+  const [atribuirA, setAtribuirA] = useState('');
+  const canAssign = podeAtribuir(user, ticket, setores); // gerente/resp. do setor (ou admin)
+  const colaboradores = colaboradoresDoSetor(ticket.setor_id, setores, systems, allUsers)
+    .map(id => allUsers.find(u => u.id === id)).filter(Boolean);
+  // resolvedor no escopo pega demanda sem dono; o líder do setor tem o botão dedicado no bloco de direcionamento
+  const podePegar = !ticket.responsible && isManager(user?.role) && !podeAtribuir(user, ticket, setores);
+
+  const atribuir = () => {
+    if (!atribuirA) return;
+    onUpdate(ticket.id, { responsible: atribuirA });
+    const alvo = allUsers.find(u => u.name === atribuirA);
+    socket.emit('ticket_assigned', { ticketId: ticket.id, toUserId: alvo?.id, from: user.name, title: ticket.title });
+    playSound('success');
+    onClose();
+  };
+  const abrirParaSetor = () => {
+    socket.emit('ticket_broadcast', { ticketId: ticket.id, setorId: ticket.setor_id, setorName: setorDoTicket?.name, from: user.name, title: ticket.title });
+    toast.success('Setor notificado — colaboradores disponíveis podem pegar a demanda.');
+    playSound('notification');
+  };
+  const pegarDemanda = () => {
+    onUpdate(ticket.id, { responsible: user.name });
+    toast.success('Demanda atribuída a você!');
+    playSound('success');
+    onClose();
+  };
+
+  // Compartilhamento externo rápido: abre o WhatsApp com o resumo da demanda + status (destinatário escolhido no app)
+  const compartilharWhatsApp = () => {
+    const linhas = [
+      `*Demanda #${ticket.id}* — ${ticket.title}`,
+      `Status: ${DEV_STATUS.find(s => s.id === ticket.status)?.name || ticket.status}`,
+      setorDoTicket?.name ? `Setor: ${setorDoTicket.name}` : null,
+      ticket.responsible ? `Responsável: ${ticket.responsible}` : 'Sem responsável',
+      ticket.delivery_date ? `Entrega: ${new Date(ticket.delivery_date).toLocaleDateString('pt-BR')}` : null,
+    ].filter(Boolean);
+    window.open(`https://wa.me/?text=${encodeURIComponent(linhas.join('\n'))}`, '_blank');
+  };
 
   const handleAccept = () => {
     if (!deliveryDate) { toast.error('Informe a data de entrega para aceitar.'); return; }
@@ -2149,6 +2632,9 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, setores = [], 
                 <span style={{ fontSize: '0.85rem', fontWeight: '500', color: 'var(--text-muted)' }}>#{ticket.id}</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <button onClick={compartilharWhatsApp} title="Compartilhar no WhatsApp" style={{ background: '#25D366', border: 'none', color: 'white', cursor: 'pointer', borderRadius: '8px', padding: '6px 10px', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', fontWeight: 700 }}>
+                  <Share2 size={16} /> WhatsApp
+                </button>
                 <button onClick={onClose} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={22} /></button>
               </div>
             </div>
@@ -2197,6 +2683,38 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, setores = [], 
               <div className="modal-details-sidebar">
                 <div>
                   <h3 style={{ fontSize: '0.8rem', fontWeight: '700', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '1rem' }}>Ações de Membro</h3>
+
+                  {/* Pegar demanda: resolvedor no escopo puxa um ticket sem responsável */}
+                  {podePegar && (
+                    <button className="btn btn-primary" style={{ width: '100%', marginBottom: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }} onClick={pegarDemanda}>
+                      <CheckSquare size={16} /> Pegar esta demanda
+                    </button>
+                  )}
+
+                  {/* Atribuição flexível: gerente/resp. do setor direciona OU abre para o setor puxar */}
+                  {canAssign && (
+                    <div className="form-group" style={{ marginBottom: '1.5rem', padding: '12px', borderRadius: '12px', border: '1px solid var(--glass-border)', background: 'rgba(0,0,0,0.02)' }}>
+                      <label style={{ fontSize: '0.75rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
+                        <UserPlus size={14} /> Atendimento da demanda
+                      </label>
+                      {/* O líder do setor decide: atende ele mesmo OU direciona a alguém do time */}
+                      <button className="btn btn-primary" style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }} onClick={pegarDemanda}>
+                        <CheckSquare size={16} /> {ticket.responsible === user?.name ? 'Você está atendendo' : 'Atender eu mesmo'}
+                      </button>
+                      <div style={{ textAlign: 'center', fontSize: '0.7rem', color: 'var(--text-muted)', margin: '10px 0 6px' }}>— ou direcione a alguém —</div>
+                      <select value={atribuirA} onChange={e => setAtribuirA(e.target.value)} style={{ padding: '8px', fontSize: '0.85rem', margin: 0 }}>
+                        <option value="">Escolher colaborador...</option>
+                        {colaboradores.filter(u => u.id !== user?.id).map(u => <option key={u.id} value={u.name}>{u.name}</option>)}
+                      </select>
+                      <button className="btn btn-primary" style={{ width: '100%', marginTop: '8px' }} onClick={atribuir} disabled={!atribuirA}>Atribuir</button>
+                      <button className="btn btn-ghost" style={{ width: '100%', marginTop: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '0.8rem' }} onClick={abrirParaSetor}>
+                        📢 Abrir para o setor puxar
+                      </button>
+                      {colaboradores.length === 0 && (
+                        <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontStyle: 'italic', marginTop: '8px', textAlign: 'center' }}>Nenhum colaborador cadastrado neste setor ainda.</p>
+                      )}
+                    </div>
+                  )}
 
                   {/* Prazo de Entrega — aceite (backlog) / prazo + reagendamento ao vencer */}
                   <div className="form-group" style={{ marginBottom: '1.5rem', padding: '12px', borderRadius: '12px', border: `1px solid ${vencido ? '#ef4444' : 'var(--glass-border)'}`, background: vencido ? 'rgba(239,68,68,0.06)' : 'rgba(0,0,0,0.02)' }}>
@@ -2345,26 +2863,71 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, setores = [], 
                 </div>
 
                 <div>
-                  <div className="modal-section-title" style={{ marginBottom: '1.5rem' }}>
-                    <Activity size={18} /> Atividade
+                  <div className="modal-section-title" style={{ marginBottom: '1.25rem' }}>
+                    <MessageSquare size={18} /> Conversa da demanda
                   </div>
-                  <div className="activity-feed">
-                    <div className="activity-item">
-                      <div style={{ 
-                        width: '32px', height: '32px', borderRadius: '50%', 
-                        background: creator?.role === 'admin' ? 'var(--primary)' : 'var(--success)',
-                        color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: '0.75rem', fontWeight: '800'
-                      }}>
-                        {getInitials(creator?.name)}
-                      </div>
-                      <div className="activity-content">
-                        <div className="activity-user">{creator?.name || "Usuário"}</div>
-                        <div className="activity-text">{ticketOrigem(ticket, setores) ? `criou este ticket (de ${ticketOrigem(ticket, setores)}) para ` : 'criou este ticket para '}{ticketDestino(ticket, setores, systems)}</div>
-                        <div className="activity-time">{new Date(ticket.created_at).toLocaleString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
-                      </div>
+
+                  {/* 1ª entrada: criação do ticket (parte do histórico) */}
+                  <div className="activity-item" style={{ marginBottom: '1rem' }}>
+                    <div style={{
+                      width: '32px', height: '32px', borderRadius: '50%',
+                      background: creator?.role === 'admin' ? 'var(--primary)' : 'var(--success)',
+                      color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: '0.75rem', fontWeight: '800'
+                    }}>
+                      {getInitials(creator?.name)}
+                    </div>
+                    <div className="activity-content">
+                      <div className="activity-user">{creator?.name || "Usuário"}</div>
+                      <div className="activity-text">{ticketOrigem(ticket, setores) ? `criou este ticket (de ${ticketOrigem(ticket, setores)}) para ` : 'criou este ticket para '}{ticketDestino(ticket, setores, systems)}</div>
+                      <div className="activity-time">{new Date(ticket.created_at).toLocaleString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
                     </div>
                   </div>
+
+                  {/* Thread do bate e volta */}
+                  <div className="hide-scrollbar" style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '320px', overflowY: 'auto', padding: '4px' }}>
+                    {messages.length === 0 && (
+                      <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic', textAlign: 'center', padding: '0.5rem 0' }}>
+                        {canPost ? 'Sem mensagens ainda. Peça ou envie detalhes abaixo.' : 'Sem mensagens ainda. Só o solicitante e o responsável conversam aqui.'}
+                      </p>
+                    )}
+                    {messages.map(m => {
+                      const autor = allUsers.find(u => u.id === m.user_id);
+                      const meu = m.user_id === user?.id;
+                      return (
+                        <div key={m.id} style={{ display: 'flex', flexDirection: 'column', alignItems: meu ? 'flex-end' : 'flex-start' }}>
+                          <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginBottom: '2px' }}>
+                            {autor?.name || 'Usuário'} · {new Date(m.created_at).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                          </div>
+                          <div style={{
+                            maxWidth: '85%', padding: '8px 12px', borderRadius: '12px', fontSize: '0.85rem', lineHeight: 1.4, whiteSpace: 'pre-wrap',
+                            background: meu ? 'var(--primary)' : 'rgba(0,0,0,0.05)', color: meu ? 'white' : 'var(--text-main)',
+                            borderTopRightRadius: meu ? '2px' : '12px', borderTopLeftRadius: meu ? '12px' : '2px'
+                          }}>
+                            {m.message}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Campo de envio — só solicitante/recebedor; demais acompanham (read-only) */}
+                  {canPost ? (
+                    <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+                      <input
+                        value={novaMsg}
+                        onChange={e => setNovaMsg(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); enviarMsg(); } }}
+                        placeholder="Escreva uma mensagem..."
+                        style={{ flex: 1, margin: 0, fontSize: '0.85rem' }}
+                      />
+                      <button className="btn btn-primary" style={{ flex: '0 0 auto' }} onClick={enviarMsg}>Enviar</button>
+                    </div>
+                  ) : (
+                    <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontStyle: 'italic', marginTop: '10px', textAlign: 'center' }}>
+                      Você acompanha a conversa (somente leitura).
+                    </p>
+                  )}
                 </div>
               </div>
             </div>
@@ -2637,8 +3200,9 @@ function AnalyticsDashboard({ tickets, setores = [] }) {
 }
 
 // --- Views Administrativas ---
-function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers, setores = [] }) {
+function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers, setores = [], systems = [] }) {
   const setorNome = (id) => setores.find(s => s.id == id)?.name || '';
+  const subSetorNome = (id) => systems.find(s => s.id == id)?.name || '';
   const dbUsers = allUsers || [];
   const [loading, setLoading] = useState(false);
   const [isNewUserModalOpen, setIsNewUserModalOpen] = useState(false);
@@ -2655,6 +3219,7 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
     const fd = new FormData(e.target);
     const data = Object.fromEntries(fd);
     data.setor_id = data.setor_id ? Number(data.setor_id) : null;
+    data.system_id = data.system_id ? Number(data.system_id) : null;
     const { error } = await api.from('users').insert([{ ...data, avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${data.email}` }]);
     if (!error) { 
       toast.success('Membro criado!'); 
@@ -2669,6 +3234,7 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
     const fd = new FormData(e.target);
     const data = Object.fromEntries(fd);
     data.setor_id = data.setor_id ? Number(data.setor_id) : null;
+    data.system_id = data.system_id ? Number(data.system_id) : null;
     if (!data.password) delete data.password; // em branco = mantém a senha atual
     const { error } = await api.from('users').update(data).eq('id', editingUser.id);
     if (!error) { 
@@ -2742,17 +3308,17 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
                       <div>
                         <div style={{ fontWeight: '700', fontSize: '0.95rem' }}>{u.name}</div>
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{u.email}</div>
-                        {u.setor_id && <div style={{ fontSize: '0.7rem', color: 'var(--primary)', fontWeight: 700, marginTop: '2px' }}>Setor: {setorNome(u.setor_id)}</div>}
+                        {u.setor_id && <div style={{ fontSize: '0.7rem', color: 'var(--primary)', fontWeight: 700, marginTop: '2px' }}>Setor: {setorNome(u.setor_id)}{u.system_id ? ` › ${subSetorNome(u.system_id)}` : ''}</div>}
                       </div>
                     </div>
                   </td>
                   <td style={{ padding: '1.25rem' }}>
                     <span className="badge" style={{
-                      background: u.role === 'admin' ? 'rgba(99,102,241,0.1)' : u.role === 'dev' ? 'rgba(139,92,246,0.1)' : 'rgba(100,116,139,0.1)',
-                      color: u.role === 'admin' ? 'var(--primary)' : u.role === 'dev' ? '#8b5cf6' : 'var(--text-muted)',
+                      background: (ROLE_COLORS[u.role] || ROLE_COLORS.funcionario).bg,
+                      color: (ROLE_COLORS[u.role] || ROLE_COLORS.funcionario).fg,
                       fontWeight: '700', textTransform: 'uppercase', fontSize: '0.65rem', padding: '4px 10px'
                     }}>
-                      {u.role}
+                      {ROLE_LABELS[u.role] || u.role}
                     </span>
                   </td>
                   <td style={{ padding: '1.25rem' }}>
@@ -2788,14 +3354,16 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
               <input name="name" placeholder="Nome" required />
               <input name="email" type="email" placeholder="E-mail" required />
               <input name="password" type="password" placeholder="Senha" required />
-              <select name="role">
-                <option value="user">User</option>
-                <option value="dev">Dev</option>
-                <option value="admin">Admin</option>
+              <select name="role" defaultValue="funcionario">
+                {ROLES.map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
               </select>
               <select name="setor_id" defaultValue="">
                 <option value="">Setor (nenhum)</option>
                 {setores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              <select name="system_id" defaultValue="">
+                <option value="">Sub-setor (nenhum)</option>
+                {systems.map(s => <option key={s.id} value={s.id}>{s.name}{setorNome(s.setor_id) ? ` (${setorNome(s.setor_id)})` : ''}</option>)}
               </select>
               <button type="submit" className="btn btn-primary" style={{ marginTop: '1rem' }}>Cadastrar</button>
             </form>
@@ -2819,14 +3387,17 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
               <input name="password" type="text" placeholder="Definir nova senha" autoComplete="new-password" />
               <label style={{ fontSize: '0.75rem' }}>Cargo / Permissão</label>
               <select name="role" defaultValue={editingUser?.role}>
-                <option value="user">User</option>
-                <option value="dev">Dev</option>
-                <option value="admin">Admin</option>
+                {ROLES.map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
               </select>
               <label style={{ fontSize: '0.75rem' }}>Setor</label>
               <select name="setor_id" defaultValue={editingUser?.setor_id ?? ''}>
                 <option value="">Setor (nenhum)</option>
                 {setores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              <label style={{ fontSize: '0.75rem' }}>Sub-setor <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(funcionário/colaborador de um sub-setor)</span></label>
+              <select name="system_id" defaultValue={editingUser?.system_id ?? ''}>
+                <option value="">Sub-setor (nenhum)</option>
+                {systems.map(s => <option key={s.id} value={s.id}>{s.name}{setorNome(s.setor_id) ? ` (${setorNome(s.setor_id)})` : ''}</option>)}
               </select>
               <button type="submit" className="btn btn-primary" style={{ marginTop: '1rem' }}>Salvar Alterações</button>
             </form>
@@ -2838,27 +3409,18 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
   );
 }
 
-function SetoresView({ user, setores = [], systems = [], onUpdate }) {
+function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate }) {
   const [activeModal, setActiveModal] = useState(null); // 'edit_name' | 'manage_resps' | 'delete_confirm' | 'new_system'
   const [editingEntity, setEditingEntity] = useState(null);
   const [editingTable, setEditingTable] = useState('setores'); // 'setores' | 'systems'
   const [newParentSetorId, setNewParentSetorId] = useState(null); // setor onde o novo sistema entra
-  const [allUsers, setAllUsers] = useState([]);
-  const [selectedResps, setSelectedResps] = useState([]);
+  const [selectedResps, setSelectedResps] = useState([]); // ids de usuários responsáveis
   const [linkModal, setLinkModal] = useState(null); // { tipo, target } p/ o link de registro
 
   const isAdmin = user?.role === 'admin';
   const entityLabel = editingTable === 'setores' ? 'Setor' : 'Sub-Setor';
   const fem = entityLabel.endsWith('a'); // concordância de gênero (Setor/Sub-Setor = masculino)
-
-  useEffect(() => {
-    if (activeModal === 'manage_resps') fetchUsers();
-  }, [activeModal]);
-
-  const fetchUsers = async () => {
-    const { data } = await api.from('users').select('name, email').order('name');
-    setAllUsers(data || []);
-  };
+  const nomeUsuario = (id) => allUsers.find(u => u.id === id)?.name || `#${id}`;
 
   const openModal = (type, table, entity = null, parentSetorId = null) => {
     setEditingTable(table);
@@ -2925,14 +3487,14 @@ function SetoresView({ user, setores = [], systems = [], onUpdate }) {
     }
   };
 
-  const toggleResp = (name) => {
-    setSelectedResps(prev => prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]);
+  const toggleResp = (id) => {
+    setSelectedResps(prev => prev.includes(id) ? prev.filter(n => n !== id) : [...prev, id]);
   };
 
   const RespChips = ({ list }) => (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
       {list?.length > 0 ? list.map((r, idx) => (
-        <span key={idx} style={{ padding: '4px 10px', background: 'rgba(0,0,0,0.05)', borderRadius: '6px', fontSize: '0.75rem', fontWeight: '600', color: 'var(--text-main)', border: '1px solid var(--glass-border)' }}>{r}</span>
+        <span key={idx} style={{ padding: '4px 10px', background: 'rgba(0,0,0,0.05)', borderRadius: '6px', fontSize: '0.75rem', fontWeight: '600', color: 'var(--text-main)', border: '1px solid var(--glass-border)' }}>{nomeUsuario(r)}</span>
       )) : <span style={{ fontStyle: 'italic', fontSize: '0.8rem', color: 'var(--text-muted)' }}>Nenhum responsável</span>}
     </div>
   );
@@ -3101,22 +3663,22 @@ function SystemActionModal({ type, entityLabel = 'Sistema', system, users, selec
               )}
               {usuariosFiltrados.map(u => (
                 <div
-                  key={u.email}
-                  onClick={() => onToggleResp(u.name)}
+                  key={u.id}
+                  onClick={() => onToggleResp(u.id)}
                   style={{
                     padding: '12px 16px', borderRadius: '10px', border: '1px solid var(--glass-border)',
-                    background: selectedResps.includes(u.name) ? 'rgba(99, 102, 241, 0.1)' : 'transparent',
+                    background: selectedResps.includes(u.id) ? 'rgba(99, 102, 241, 0.1)' : 'transparent',
                     cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between'
                   }}
                 >
                   <span style={{ fontWeight: '500' }}>{u.name}</span>
                   <div style={{
                     width: '20px', height: '20px', borderRadius: '4px',
-                    border: `2px solid ${selectedResps.includes(u.name) ? 'var(--primary)' : 'var(--glass-border)'}`,
-                    background: selectedResps.includes(u.name) ? 'var(--primary)' : 'transparent',
+                    border: `2px solid ${selectedResps.includes(u.id) ? 'var(--primary)' : 'var(--glass-border)'}`,
+                    background: selectedResps.includes(u.id) ? 'var(--primary)' : 'transparent',
                     display: 'flex', alignItems: 'center', justifyContent: 'center'
                   }}>
-                    {selectedResps.includes(u.name) && <CheckSquare size={14} color="white" />}
+                    {selectedResps.includes(u.id) && <CheckSquare size={14} color="white" />}
                   </div>
                 </div>
               ))}
@@ -3143,6 +3705,122 @@ function SystemActionModal({ type, entityLabel = 'Sistema', system, users, selec
       </motion.div>
     </div>,
     document.body
+  );
+}
+
+// --- Configurações do sistema (admin): credenciais de e-mail (Resend) ---
+function ConfigView() {
+  const [status, setStatus] = useState({ emailConfigured: false, emailFrom: null });
+  const [apiKey, setApiKey] = useState('');
+  const [from, setFrom] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [testeEmail, setTesteEmail] = useState('');
+  const [testando, setTestando] = useState(false);
+  const [notif, setNotif] = useState({ ticket_criado: true, ticket_alterado: true, nova_mensagem: true });
+
+  const carregar = async () => {
+    try { const r = await (await fetch('/api/config')).json(); setStatus(r); setFrom(r.emailFrom || ''); if (r.notif) setNotif(r.notif); } catch {}
+  };
+  useEffect(() => { carregar(); }, []);
+
+  const salvar = async () => {
+    setSaving(true);
+    try {
+      const r = await (await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ resendApiKey: apiKey || undefined, emailFrom: from || undefined, notif }) })).json();
+      if (r.ok) { toast.success('Configuração salva!'); setApiKey(''); playSound('success'); carregar(); }
+      else toast.error('Erro ao salvar: ' + (r.error || ''));
+    } catch { toast.error('Erro ao salvar.'); }
+    finally { setSaving(false); }
+  };
+
+  const enviarTeste = async () => {
+    if (!testeEmail) { toast.error('Informe um e-mail para o teste.'); return; }
+    setTestando(true);
+    try {
+      const r = await (await fetch('/api/notify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: [testeEmail], subject: 'TicketFlow — teste de e-mail', email: { cabecalho: 'Notificação de Ticket', icone: '✉️', titulo: 'E-mail de teste', descricao: 'Se você recebeu este e-mail, a integração de notificações do TicketFlow está funcionando ✅', assinatura: 'TicketFlow' } }) })).json();
+      if (r.ok) toast.success('E-mail de teste enviado!');
+      else if (r.skipped) toast.error('E-mail não configurado ainda.');
+      else toast.error('Falha no envio: ' + (r.error || ''));
+    } catch { toast.error('Falha no envio.'); }
+    finally { setTestando(false); }
+  };
+
+  return (
+    <div className="animate-in" style={{ maxWidth: '640px' }}>
+      <div style={{ marginBottom: '2rem' }}>
+        <h2 style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '1.75rem', fontWeight: '800' }}>
+          <Settings color="var(--primary)" size={28} /> Configurações
+        </h2>
+        <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginTop: '4px' }}>Credenciais de integração do sistema.</p>
+      </div>
+
+      <div className="glass" style={{ padding: '1.75rem', border: '1px solid var(--glass-border)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+          <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800 }}>Notificações por e-mail (Resend)</h3>
+          <span className="badge" style={{ background: status.emailConfigured ? 'rgba(16,185,129,0.12)' : 'rgba(100,116,139,0.12)', color: status.emailConfigured ? '#10b981' : 'var(--text-muted)', fontWeight: 700, fontSize: '0.7rem', padding: '4px 10px' }}>
+            {status.emailConfigured ? 'Configurado ✓' : 'Não configurado'}
+          </span>
+        </div>
+
+        <div className="form-group">
+          <label style={{ fontSize: '0.75rem' }}>API Key do Resend <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(em branco = mantém a atual)</span></label>
+          <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="re_..." autoComplete="new-password" />
+        </div>
+        <div className="form-group">
+          <label style={{ fontSize: '0.75rem' }}>Remetente (From)</label>
+          <input value={from} onChange={e => setFrom(e.target.value)} placeholder="TicketFlow &lt;chamados@seudominio.com&gt;" />
+        </div>
+
+        <div style={{ height: '1px', background: 'var(--glass-border)', margin: '1.25rem 0' }} />
+        <h4 style={{ margin: '0 0 0.5rem', fontSize: '0.95rem', fontWeight: 800 }}>Quando enviar e-mail</h4>
+        <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', margin: '0 0 0.75rem' }}>Escolha quais eventos disparam notificação por e-mail.</p>
+        {[
+          ['ticket_criado', 'Ao criar uma demanda', 'avisa os responsáveis do setor de destino'],
+          ['ticket_alterado', 'Em qualquer alteração da demanda', 'avisa o solicitante (criador)'],
+          ['nova_mensagem', 'Ao chegar nova mensagem no chat', 'avisa o outro lado da conversa'],
+        ].map(([k, titulo, sub]) => (
+          <label key={k} style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '8px 0', cursor: 'pointer' }}>
+            <input type="checkbox" checked={!!notif[k]} onChange={e => setNotif({ ...notif, [k]: e.target.checked })} style={{ width: 'auto', margin: '3px 0 0' }} />
+            <span>
+              <span style={{ fontSize: '0.9rem', fontWeight: 600, display: 'block' }}>{titulo}</span>
+              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{sub}</span>
+            </span>
+          </label>
+        ))}
+
+        <button className="btn btn-primary" style={{ width: '100%', marginTop: '1rem' }} onClick={salvar} disabled={saving}>{saving ? 'Salvando…' : 'Salvar configuração'}</button>
+
+        <div style={{ height: '1px', background: 'var(--glass-border)', margin: '1.5rem 0' }} />
+
+        <div className="form-group">
+          <label style={{ fontSize: '0.75rem' }}>Enviar e-mail de teste para</label>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <input type="email" value={testeEmail} onChange={e => setTesteEmail(e.target.value)} placeholder="seu@email.com" style={{ flex: 1, margin: 0 }} />
+            <button className="btn btn-ghost" style={{ flex: '0 0 auto' }} onClick={enviarTeste} disabled={testando}>{testando ? 'Enviando…' : 'Testar'}</button>
+          </div>
+          <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '6px' }}>
+            Em modo teste (remetente <code>onboarding@resend.dev</code>) o Resend só entrega para o e-mail da conta. Para enviar aos responsáveis dos setores, verifique um domínio no Resend e use um remetente dele.
+          </p>
+        </div>
+      </div>
+
+      {/* Manual de configuração do Resend */}
+      <div className="glass" style={{ padding: '1.75rem', border: '1px solid var(--glass-border)', marginTop: '1.5rem' }}>
+        <h3 style={{ margin: '0 0 4px', fontSize: '1.1rem', fontWeight: 800 }}>Como configurar o e-mail (Resend)</h3>
+        <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', margin: '0 0 1.25rem' }}>Passo a passo para o sistema enviar e-mails aos responsáveis dos setores.</p>
+        <ol style={{ margin: 0, paddingLeft: '1.2rem', display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '0.88rem', lineHeight: 1.6, color: 'var(--text-main)' }}>
+          <li><b>Crie uma conta</b> em <a href="https://resend.com" target="_blank" rel="noreferrer" style={{ color: 'var(--primary)' }}>resend.com</a> (plano gratuito basta).</li>
+          <li><b>Verifique o seu domínio:</b> no painel do Resend → <i>Domains</i> → <i>Add Domain</i> → informe seu domínio (ex.: <code>tynketech.com</code>). O Resend mostrará registros <b>SPF</b> e <b>DKIM</b> — adicione-os no DNS do domínio (onde ele foi registrado) e aguarde a verificação ficar verde. <span style={{ color: 'var(--text-muted)' }}>Sem domínio verificado, os e-mails só chegam ao dono da conta (modo teste).</span></li>
+          <li><b>Gere a API Key:</b> painel → <i>API Keys</i> → <i>Create API Key</i> → copie o valor que começa com <code>re_</code>.</li>
+          <li><b>Preencha aqui em cima:</b> cole a <b>API Key</b> no campo acima e defina o <b>Remetente</b> com um endereço do seu domínio, no formato <code>TicketFlow &lt;chamados@seudominio.com&gt;</code>. Clique em <b>Salvar configuração</b>.</li>
+          <li><b>Teste:</b> use o campo <i>“Enviar e-mail de teste”</i> acima com um endereço qualquer — se chegar, está tudo certo.</li>
+          <li><b>Escolha os eventos:</b> em <i>“Quando enviar e-mail”</i> ligue/desligue as notificações de criação, alteração e mensagens do chat.</li>
+        </ol>
+        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '1.25rem', paddingTop: '1rem', borderTop: '1px solid var(--glass-border)' }}>
+          A chave fica guardada apenas no servidor (banco), nunca é exibida de volta nem enviada ao navegador. Para trocar depois, basta colar uma nova aqui.
+        </p>
+      </div>
+    </div>
   );
 }
 

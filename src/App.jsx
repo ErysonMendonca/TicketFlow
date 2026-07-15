@@ -1979,8 +1979,7 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
         )}
       </AnimatePresence>
 
-      <AnimatePresence>
-        {novaColuna && createPortal(
+      {novaColuna && createPortal(
           <div className="overlay" style={{ alignItems: 'center', padding: '1rem' }} onClick={() => setNovaColuna(null)}>
             <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="glass modal" style={{ width: '440px', maxWidth: '94vw', padding: '1.75rem' }} onClick={e => e.stopPropagation()}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
@@ -2008,7 +2007,6 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
           </div>,
           document.body
         )}
-      </AnimatePresence>
     </div>
   );
 }

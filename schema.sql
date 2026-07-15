@@ -7,11 +7,15 @@ CREATE TABLE IF NOT EXISTS users (
     name VARCHAR(255) NOT NULL,
     email VARCHAR(255) NOT NULL UNIQUE,
     password VARCHAR(255) NOT NULL,
-    role VARCHAR(50) NOT NULL DEFAULT 'user', -- admin, dev, user
+    role VARCHAR(50) NOT NULL DEFAULT 'funcionario', -- admin, gerente, responsavel_setor, responsavel_subsetor, funcionario
     avatar VARCHAR(500),
     is_online BOOLEAN DEFAULT FALSE,
-    setor_id INT NULL, -- setor ao qual o usuário pertence (origem dos tickets que ele abre); FK add via migration
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    setor_id INT NULL, -- setor ao qual o usuário pertence (origem dos tickets que ele abre)
+    system_id INT NULL, -- sub-setor (system) ao qual o funcionário/colaborador pertence (um nível abaixo do setor)
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_users_setor (setor_id),
+    KEY idx_users_system (system_id)
+    -- FKs de users.setor_id/system_id adicionadas no fim do arquivo (setores/systems são criadas depois)
 );
 
 -- Tabela de Setores (unidade organizacional principal; ex: TI, Financeiro)
@@ -20,7 +24,8 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS setores (
     id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(255) NOT NULL UNIQUE,
-    primary_responsibles JSON NULL,
+    primary_responsibles JSON NULL, -- array de IDs de users (responsáveis/gerentes do setor; definem o escopo de visualização)
+    colunas JSON NULL, -- colunas de Kanban personalizadas do setor: [{id,name,color}]
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -28,9 +33,11 @@ CREATE TABLE IF NOT EXISTS setores (
 CREATE TABLE IF NOT EXISTS systems (
     id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(255) NOT NULL UNIQUE,
-    primary_responsibles JSON NULL,
-    setor_id INT NULL,
+    primary_responsibles JSON NULL, -- array de IDs de users (responsáveis do sub-setor)
+    colunas JSON NULL, -- colunas de Kanban personalizadas do sub-setor: [{id,name,color}]
+    setor_id INT NULL, -- setor pai (todo sub-setor pertence a um setor; populado pela migração)
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_systems_setor (setor_id),
     FOREIGN KEY (setor_id) REFERENCES setores(id) ON DELETE SET NULL
 );
 
@@ -53,6 +60,8 @@ CREATE TABLE IF NOT EXISTS tickets (
     shared_with JSON NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_tickets_setor (setor_id),
+    KEY idx_tickets_platform (platform),
     FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
     FOREIGN KEY (setor_id) REFERENCES setores(id) ON DELETE SET NULL,
     FOREIGN KEY (origin_setor_id) REFERENCES setores(id) ON DELETE SET NULL
@@ -82,6 +91,10 @@ CREATE TABLE IF NOT EXISTS ticket_messages (
     FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
+
+-- FKs de users.setor_id/system_id (declaradas aqui porque `setores`/`systems` são criadas depois de `users`)
+ALTER TABLE users ADD CONSTRAINT fk_users_setor FOREIGN KEY (setor_id) REFERENCES setores(id) ON DELETE SET NULL;
+ALTER TABLE users ADD CONSTRAINT fk_users_system FOREIGN KEY (system_id) REFERENCES systems(id) ON DELETE SET NULL;
 
 -- Dados de Exemplo Base
 INSERT IGNORE INTO users (name, email, password, role) VALUES

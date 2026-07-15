@@ -43,6 +43,24 @@ io.on("connection", (socket) => {
       io.emit('new_mention_alert', data);
   });
 
+  // Chat da demanda (bate e volta): repassa a nova mensagem aos outros conectados
+  socket.on('ticket_message', (data) => {
+      console.log(`>>> Nova mensagem no Ticket #${data.ticketId} (de ${data.from})`);
+      socket.broadcast.emit('new_ticket_message', data);
+  });
+
+  // Atribuição flexível: direcionamento manual → avisa o escolhido
+  socket.on('ticket_assigned', (data) => {
+      console.log(`>>> Ticket #${data.ticketId} direcionado (de ${data.from})`);
+      socket.broadcast.emit('ticket_assigned_alert', data);
+  });
+
+  // Atribuição flexível: abrir ao setor → avisa os colaboradores puxarem
+  socket.on('ticket_broadcast', (data) => {
+      console.log(`>>> Ticket #${data.ticketId} aberto ao setor ${data.setorName || data.setorId}`);
+      socket.broadcast.emit('ticket_broadcast_alert', data);
+  });
+
   socket.on("disconnect", () => {
     console.log("LOG: Usuário desconectado.");
   });

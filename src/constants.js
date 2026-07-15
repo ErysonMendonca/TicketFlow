@@ -1,3 +1,28 @@
+// Papéis do sistema (hierarquia). funcionario abre chamados; os demais atendem/gerenciam.
+export const ROLES = ['admin', 'gerente', 'responsavel_setor', 'responsavel_subsetor', 'funcionario'];
+
+export const ROLE_LABELS = {
+  admin: 'Admin',
+  gerente: 'Gerente',
+  responsavel_setor: 'Resp. Setor',
+  responsavel_subsetor: 'Resp. Sub-Setor',
+  funcionario: 'Funcionário',
+};
+
+export const ROLE_COLORS = {
+  admin: { bg: 'rgba(99,102,241,0.1)', fg: 'var(--primary)' },
+  gerente: { bg: 'rgba(236,72,153,0.1)', fg: '#ec4899' },
+  responsavel_setor: { bg: 'rgba(139,92,246,0.1)', fg: '#8b5cf6' },
+  responsavel_subsetor: { bg: 'rgba(14,165,233,0.1)', fg: '#0ea5e9' },
+  funcionario: { bg: 'rgba(100,116,139,0.1)', fg: 'var(--text-muted)' },
+};
+
+// Quem atende/gerencia (vê Kanban, aceita ticket, edita). funcionario só abre chamados.
+export const isManager = (role) => !!role && role !== 'funcionario';
+
+// Papéis que operam o board por padrão (caem no Kanban ao logar); admin começa em Tickets.
+export const BOARD_ROLES = ['gerente', 'responsavel_setor', 'responsavel_subsetor'];
+
 export const PLATFORMS = [
   { id: 'lotogiro', name: 'Lotogiro', primary_responsibles: ['Denner', 'Jhuan', 'Allan'] },
   { id: 'matriz', name: 'Matriz', primary_responsibles: ['Allan'] },
@@ -9,7 +34,7 @@ export const PLATFORMS = [
 ];
 
 export const DEV_STATUS = [
-  { id: 'backlog', name: 'Backlog', userStatus: 'aberto', userStatusName: 'Aberto', color: '#6366f1' },
+  { id: 'backlog', name: 'Pedidos', userStatus: 'aberto', userStatusName: 'Aberto', color: '#6366f1' },
   { id: 'analise', name: 'Análise', userStatus: 'pendente', userStatusName: 'Em Análise', color: '#3b82f6' },
   { id: 'resolvendo', name: 'Resolvendo', userStatus: 'pendente', userStatusName: 'Pendente', color: '#f59e0b' },
   { id: 'em_teste', name: 'Em Teste', userStatus: 'pendente', userStatusName: 'Pendente', color: '#8b5cf6' },
@@ -33,7 +58,10 @@ export const URGENCY_LEVELS = [
   { id: 'leve', name: 'Leve', color: '#10b981' },
   { id: 'moderado', name: 'Moderado', color: '#f59e0b' },
   { id: 'grave', name: 'Grave', color: '#ef4444' },
+  { id: 'maxima', name: 'Máxima', color: '#b91c1c' }, // notifica o recebedor continuamente + vai pro topo da fila
 ];
+
+export const URGENCIA_MAXIMA = 'maxima';
 
 export const MOCK_USERS = [
   { id: 'allan', name: 'Allan', role: 'admin', avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Allan' },

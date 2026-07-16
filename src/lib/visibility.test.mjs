@@ -7,7 +7,6 @@ const systems = [{ id: 100, setor_id: 1, primary_responsibles: [30] }];
 
 const admin     = { id: 1,  role: 'admin' };
 const func      = { id: 5,  role: 'funcionario' };
-const respSetor = { id: 10, role: 'responsavel_setor' };
 const respSub   = { id: 30, role: 'responsavel_subsetor' };
 const gerente   = { id: 10, role: 'gerente' };
 
@@ -22,22 +21,19 @@ assert.equal(canSeeTicket(tSetor1, admin, setores, systems), true);
 assert.equal(canSeeTicket(tSetor1, func, setores, systems), false);
 assert.equal(canSeeTicket(tOwn, func, setores, systems), true);
 assert.equal(canSeeTicket(tShared, func, setores, systems), true);
-// resp. setor vê todo o setor 1, não o setor 2
-assert.equal(canSeeTicket(tSetor1, respSetor, setores, systems), true);
-assert.equal(canSeeTicket(tSetor2, respSetor, setores, systems), false);
+// gerente vê todo o setor 1, não o setor 2
+assert.equal(canSeeTicket(tSetor1, gerente, setores, systems), true);
+assert.equal(canSeeTicket(tSetor2, gerente, setores, systems), false);
 // resp. sub-setor vê pelo platform (system 100), não outro setor
 assert.equal(canSeeTicket(tSetor1, respSub, setores, systems), true);
 assert.equal(canSeeTicket(tSetor2, respSub, setores, systems), false);
-// gerente usa o mesmo mecanismo do resp. setor
-assert.equal(canSeeTicket(tSetor1, gerente, setores, systems), true);
-assert.equal(canSeeTicket(tSetor2, gerente, setores, systems), false);
 // Kanban (includeOwn=false): quem só criou não vê; escopo/compartilhado seguem valendo
 assert.equal(canSeeTicket(tOwn, func, setores, systems, false), false);       // só criou → fora do board
 assert.equal(canSeeTicket(tShared, func, setores, systems, false), true);     // compartilhado → no board
-assert.equal(canSeeTicket(tSetor1, respSetor, setores, systems, false), true);// escopo do setor → no board
+assert.equal(canSeeTicket(tSetor1, gerente, setores, systems, false), true);// escopo do setor → no board
 
 // helpers
-assert.deepEqual(leadSetorIds(respSetor, setores), [1]);
+assert.deepEqual(leadSetorIds(gerente, setores), [1]);
 assert.deepEqual(leadSystemIds(respSub, systems), [100]);
 
 // --- Atribuição flexível ---
@@ -46,7 +42,7 @@ assert.deepEqual(colaboradoresDoSetor(1, setores, systems).sort((a,b)=>a-b), [10
 assert.deepEqual(colaboradoresDoSetor(2, setores, systems), [20]); // só o resp. do setor 2
 // podeAtribuir: admin sim; quem lidera o setor do ticket sim; resp. de sub-setor não lidera o setor
 assert.equal(podeAtribuir(admin, tSetor1, setores), true);
-assert.equal(podeAtribuir(respSetor, tSetor1, setores), true);       // lidera setor 1
+assert.equal(podeAtribuir(gerente, tSetor1, setores), true);         // lidera setor 1
 assert.equal(podeAtribuir(respSub, tSetor1, setores), false);        // lidera só o sub-setor
 assert.equal(podeAtribuir(func, tSetor1, setores), false);
 // isColaboradorDoSetor

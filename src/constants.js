@@ -1,10 +1,9 @@
 // Papéis do sistema (hierarquia). funcionario abre chamados; os demais atendem/gerenciam.
-export const ROLES = ['admin', 'gerente', 'responsavel_setor', 'responsavel_subsetor', 'funcionario'];
+export const ROLES = ['admin', 'gerente', 'responsavel_subsetor', 'funcionario'];
 
 export const ROLE_LABELS = {
   admin: 'Admin',
   gerente: 'Gerente',
-  responsavel_setor: 'Resp. Setor',
   responsavel_subsetor: 'Resp. Sub-Setor',
   funcionario: 'Funcionário',
 };
@@ -12,7 +11,6 @@ export const ROLE_LABELS = {
 export const ROLE_COLORS = {
   admin: { bg: 'rgba(99,102,241,0.1)', fg: 'var(--primary)' },
   gerente: { bg: 'rgba(236,72,153,0.1)', fg: '#ec4899' },
-  responsavel_setor: { bg: 'rgba(139,92,246,0.1)', fg: '#8b5cf6' },
   responsavel_subsetor: { bg: 'rgba(14,165,233,0.1)', fg: '#0ea5e9' },
   funcionario: { bg: 'rgba(100,116,139,0.1)', fg: 'var(--text-muted)' },
 };
@@ -21,7 +19,7 @@ export const ROLE_COLORS = {
 export const isManager = (role) => !!role && role !== 'funcionario';
 
 // Papéis que operam o board por padrão (caem no Kanban ao logar); admin começa em Tickets.
-export const BOARD_ROLES = ['gerente', 'responsavel_setor', 'responsavel_subsetor'];
+export const BOARD_ROLES = ['gerente', 'responsavel_subsetor'];
 
 export const PLATFORMS = [
   { id: 'lotogiro', name: 'Lotogiro', primary_responsibles: ['Denner', 'Jhuan', 'Allan'] },

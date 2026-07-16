@@ -26,6 +26,11 @@ io.on("connection", (socket) => {
     socket.broadcast.emit("ticket_status_refreshed", data);
   });
 
+  // Quando um ticket é excluído → some da lista/Kanban dos outros
+  socket.on("ticket_deleted", (data) => {
+    socket.broadcast.emit("ticket_deleted_alert", data);
+  });
+
   // Quando a lista de membros muda (criação/remoção)
   socket.on("users_changed", () => {
     socket.broadcast.emit("users_refreshed");

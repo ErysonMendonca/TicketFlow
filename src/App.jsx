@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import {
   Plus,
   ArrowRight,
+  ArrowLeft,
   User as UserIcon,
   Code2,
   Search,
@@ -55,14 +56,14 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { api } from './lib/api';
 import toast, { Toaster } from 'react-hot-toast';
 import { PLATFORMS, DEV_STATUS, URGENCY_LEVELS, URGENCIA_MAXIMA, OTHER_STATUS, MOCK_USERS, TICKET_TYPES, ROLES, ROLE_LABELS, ROLE_COLORS, isManager, BOARD_ROLES } from './constants';
-import { canSeeTicket, colaboradoresDoSetor, podeAtribuir, isColaboradorDoSetor, leadSetorIds, leadSystemIds } from './lib/visibility';
+import { canSeeTicket, colaboradoresDoSetor, podeAtribuir, isColaboradorDoSetor, leadSetorIds, leadSystemIds, noSetor } from './lib/visibility';
 import { io } from 'socket.io-client';
 
 // WebSocket: em produção conecta no mesmo domínio (proxy Nginx → servidor de socket);
 // em dev, aponta pro servidor local via NEXT_PUBLIC_SOCKET_URL (ex.: http://localhost:3001).
 const socket = io(process.env.NEXT_PUBLIC_SOCKET_URL || undefined, {
   path: '/socket.io/',
-  transports: ['polling', 'websocket'],
+  transports: ['websocket', 'polling'], // WS primeiro → conecta mais rápido; cai pra polling se preciso
   upgrade: true
 });
 
@@ -114,7 +115,44 @@ const getStorageUser = () => {
 };
 
 // --- Componentes Menores ---
-const StatusBadge = ({ id }) => {
+// Resolve nome/cor de um status — inclui as COLUNAS PERSONALIZADAS (id 'col_...') guardadas em setores/systems.
+// Sem isso, um ticket numa coluna custom mostra o id cru (ex.: col_1784162228423) no lugar do nome.
+function statusInfo(id, setores = [], systems = []) {
+  const base = [...DEV_STATUS, ...OTHER_STATUS].find(s => s.id === id);
+  if (base) return { name: base.name, color: base.color };
+  for (const owner of [...setores, ...systems]) {
+    const c = (Array.isArray(owner.colunas) ? owner.colunas : []).find(col => col.id === id);
+    if (c) return { name: c.name, color: c.color };
+  }
+  return { name: id, color: null };
+}
+
+// Enquanto o ticket está em 'backlog' (não aceito), NÃO revela quem está com a demanda — só após alguém aceitar.
+function donoVisivel(t) {
+  return (t && t.status && t.status !== 'backlog') ? (t.responsible || null) : null;
+}
+
+// Ícone da marca WhatsApp (lucide não tem) — SVG inline.
+const WhatsAppIcon = ({ size = 20 }) => (
+  <svg viewBox="0 0 24 24" width={size} height={size} fill="currentColor" aria-hidden="true">
+    <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.71.306 1.263.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+  </svg>
+);
+
+// Tempo relativo em pt-BR: "agora", "há 3 min", "há 2 h", "há 5 dias".
+function tempoRelativo(d) {
+  if (!d) return null;
+  const diff = Math.max(0, Date.now() - new Date(d).getTime());
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return 'agora';
+  if (min < 60) return `há ${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `há ${h} h`;
+  const dias = Math.floor(h / 24);
+  return `há ${dias} dia${dias > 1 ? 's' : ''}`;
+}
+
+const StatusBadge = ({ id, setores = [], systems = [] }) => {
   const allStatus = [...(DEV_STATUS || []), ...(URGENCY_LEVELS || []), ...(OTHER_STATUS || [])];
   let config = allStatus.find(s => s.id === id);
 
@@ -123,6 +161,12 @@ const StatusBadge = ({ id }) => {
     if (devStatus) {
       config = { name: devStatus.userStatusName, color: devStatus.color };
     }
+  }
+
+  // Coluna personalizada (col_...): busca nome/cor em setores/systems
+  if (!config) {
+    const custom = statusInfo(id, setores, systems);
+    if (custom.color) config = custom;
   }
 
   const bgColor = config?.color ? `${config.color}20` : 'rgba(0,0,0,0.05)';
@@ -618,7 +662,7 @@ function RegistroLinkModal({ tipo, target, onClose }) {
 
 // --- Componente Principal ---
 // --- App Header Horizontal ---
-function AppHeader({ currentView, setView, user, theme, toggleTheme, onLogout }) {
+function AppHeader({ currentView, setView, user, theme, toggleTheme, onLogout, badges = {} }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   
   const role = user?.role || 'guest';
@@ -626,10 +670,10 @@ function AppHeader({ currentView, setView, user, theme, toggleTheme, onLogout })
 
   const menus = [
     { id: 'tickets', name: 'Tickets', icon: <UserIcon size={18} />, roles: ROLES },
-    { id: 'kanban', name: 'Kanban', icon: <LayoutDashboard size={18} />, roles: manageRoles },
-    { id: 'analytics', name: 'Analytics', icon: <BarChart3 size={18} />, roles: manageRoles },
+    { id: 'kanban', name: 'Kanban', icon: <LayoutDashboard size={18} />, roles: ROLES }, // todos, inclusive funcionário (atende os recebidos)
     { id: 'users', name: 'Usuários', icon: <Users size={18} />, roles: ['admin'] },
-    { id: 'setores', name: 'Setores', icon: <Layers size={18} />, roles: ['admin'] },
+    { id: 'setores', name: 'Setores', icon: <Layers size={18} />, roles: ['admin', 'gerente', 'responsavel_subsetor'] },
+    { id: 'analytics', name: 'Relatórios', icon: <BarChart3 size={18} />, roles: manageRoles }, // depois de Setores; gerente/resp./admin — funcionário não
     { id: 'logs', name: 'Logs', icon: <Activity size={18} />, roles: ['admin'] },
     { id: 'config', name: 'Config', icon: <Settings size={18} />, roles: ['admin'] },
   ];
@@ -727,9 +771,15 @@ function AppHeader({ currentView, setView, user, theme, toggleTheme, onLogout })
               key={menu.id}
               className={`nav-btn ${currentView === menu.id ? 'active' : ''}`}
               onClick={() => setView(menu.id)}
+              style={{ position: 'relative' }}
             >
               {menu.icon}
               <span>{menu.name}</span>
+              {badges[menu.id] > 0 && (
+                <span title={`${badges[menu.id]} em Pedidos`} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: '18px', height: '18px', padding: '0 5px', borderRadius: '999px', background: '#ef4444', color: '#fff', fontSize: '0.65rem', fontWeight: 800, marginLeft: '2px' }}>
+                  {badges[menu.id]}
+                </span>
+              )}
             </button>
           ))}
         </nav>
@@ -766,6 +816,11 @@ export default function App() {
   const [hash, setHash] = useState(window.location.hash);
   const [viewingTicket, setViewingTicket] = useState(null);
   const [acceptGate, setAcceptGate] = useState(null); // ticket aguardando aceite antes de abrir os detalhes
+  const [statusView, setStatusView] = useState(null); // criador acompanha o próprio ticket (só leitura)
+  const [chatTicket, setChatTicket] = useState(null); // conversa da demanda aberta como TELA cheia
+  const [detalheReadOnly, setDetalheReadOnly] = useState(false); // detalhe aberto só-leitura (criador vendo o que enviou)
+  const [msgMeta, setMsgMeta] = useState([]); // {ticket_id,user_id,created_at} leve (sem baixar mídia) p/ contador de não-lidas
+  const [seen, setSeen] = useState({}); // ticketId -> ISO da última visualização (persistido no localStorage por usuário)
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
 
   const [confirmConfig, setConfirmConfig] = useState({ isOpen: false, title: '', message: '', onConfirm: null });
@@ -807,6 +862,7 @@ export default function App() {
       await fetchUsersList();
 
       await fetchTickets();
+      await fetchMsgMeta();
 
     };
     initData();
@@ -839,7 +895,7 @@ export default function App() {
     
     // Ouvir novos tickets em tempo real
     socket.on('new_ticket_alert', (newTicket) => {
-      // Se for admin ou o dev responsável (ou livre), notifica
+      upsertTicketLocal(newTicket); // delta: usa o payload completo, sem refetch da lista
       if (isManager(user?.role)) {
         playSound('notification');
         toast.success(`🔔 Novo Ticket: #${newTicket.id} - ${newTicket.title}`, {
@@ -847,10 +903,6 @@ export default function App() {
           position: 'top-right',
           style: { background: 'var(--primary)', color: 'white', fontWeight: 'bold' }
         });
-        
-        // Tocar um som opcional (pode ser adicionado depois)
-        // Recarregar a lista silenciosamente
-        fetchTickets();
       }
     });
 
@@ -872,8 +924,14 @@ export default function App() {
       }
     });
 
-    socket.on('ticket_status_refreshed', () => {
-      fetchTickets();
+    socket.on('ticket_status_refreshed', (data) => {
+      // delta: busca só o ticket que mudou (1 linha) em vez da lista toda
+      if (data?.id != null) upsertTicketById(data.id);
+    });
+
+    // Ticket excluído em outro cliente → some da lista/Kanban aqui também
+    socket.on('ticket_deleted_alert', (data) => {
+      if (data?.id != null) setTickets(prev => prev.filter(t => t.id !== data.id));
     });
 
     // Membro criado/removido em outro cliente → atualiza a lista sem recarregar
@@ -890,12 +948,13 @@ export default function App() {
           position: 'bottom-right',
           style: { background: '#10b981', color: 'white', fontWeight: 'bold' }
         });
-        fetchTickets();
       }
+      upsertTicketById(data.ticketId); // delta: só o ticket compartilhado (traz o shared_with atualizado)
     });
 
     // Chat da demanda: avisa o destinatário (criador ↔ responsável) quando não está com o ticket aberto
     socket.on('new_ticket_message', (data) => {
+      fetchMsgMeta(); // atualiza o contador de não-lidas na listagem
       if (data.toUserId === user?.id) {
         playSound('notification');
         toast(`💬 Nova mensagem no Ticket #${data.ticketId}`, {
@@ -927,6 +986,7 @@ export default function App() {
       clearInterval(usersPolling);
       socket.off('new_ticket_alert');
       socket.off('ticket_status_refreshed');
+      socket.off('ticket_deleted_alert');
       socket.off('users_refreshed');
       socket.off('new_ticket_message');
     };
@@ -935,23 +995,25 @@ export default function App() {
   // Notificações de atribuição flexível (dependem de setores/systems p/ saber se sou colaborador do setor)
   useEffect(() => {
     const onAssigned = (data) => {
+      upsertTicketById(data.ticketId); // delta: só o ticket direcionado
       if (data.toUserId === user?.id) {
         playSound('notification');
         toast(`📌 Você recebeu a demanda #${data.ticketId}${data.title ? ' - ' + data.title : ''}`, {
           duration: 8000, position: 'top-right',
           style: { background: 'var(--primary)', color: 'white', fontWeight: 'bold' }
         });
-        fetchTickets();
       }
     };
     const onBroadcast = (data) => {
-      if (data.from !== user?.name && isColaboradorDoSetor(user, data.setorId, setoresList, systemsList)) {
+      // noSetor checa a lotação do PRÓPRIO usuário (setor_id/system_id) — funciona sem allUsers,
+      // ao contrário do isColaboradorDoSetor, que não reconhecia os funcionários e por isso não notificava.
+      if (data.from !== user?.name && noSetor(user, data.setorId, systemsList)) {
         playSound('notification');
         toast(`📢 Demanda #${data.ticketId} disponível no setor ${data.setorName || ''} — pode pegar!`, {
           duration: 9000, position: 'top-center', icon: '📢',
           style: { background: '#0ea5e9', color: 'white', fontWeight: '800' }
         });
-        fetchTickets();
+        upsertTicketById(data.ticketId); // delta: só a demanda aberta ao setor
       }
     };
     socket.on('ticket_assigned_alert', onAssigned);
@@ -1029,14 +1091,13 @@ export default function App() {
     return () => {};
   }, []);
 
+  // Colunas do ticket (sem attachments, que são pesados e vêm sob demanda)
+  const TICKET_COLS = 'id, title, description, setor_id, origin_setor_id, platform, status, urgency, ticket_type, responsible, delivery_date, created_by, created_at, updated_at, dev_notes, shared_with, open_pool, responsible_seen_at, finalized';
+
   async function fetchTickets() {
     try {
       setLoading(true);
-      const { data, error } = await api
-        .from('tickets')
-        .select('id, title, description, setor_id, origin_setor_id, platform, status, urgency, ticket_type, responsible, delivery_date, created_by, created_at, updated_at, dev_notes, shared_with')
-        .order('created_at', { ascending: false });
-
+      const { data, error } = await api.from('tickets').select(TICKET_COLS).order('created_at', { ascending: false });
       if (error) throw error;
       setTickets(data || []);
       if (data?.length > 0) playSound('success');
@@ -1046,6 +1107,53 @@ export default function App() {
     } finally {
       setLoading(false);
     }
+  }
+
+  // Onda 1 do socket: em vez de recarregar a LISTA toda a cada evento, busca só o ticket que mudou (1 linha) e faz upsert.
+  const upsertTicketById = async (id) => {
+    if (id == null) return;
+    const { data } = await api.from('tickets').select(TICKET_COLS).eq('id', id).single();
+    if (!data) return;
+    setTickets(prev => {
+      const i = prev.findIndex(t => t.id === data.id);
+      if (i === -1) return [data, ...prev];          // novo → adiciona no topo
+      const copy = [...prev]; copy[i] = { ...copy[i], ...data }; return copy; // existente → mescla
+    });
+  };
+
+  // Aplica um ticket já pronto (payload completo do socket) sem ir ao banco
+  const upsertTicketLocal = (t) => {
+    if (!t?.id) return;
+    setTickets(prev => prev.some(x => x.id === t.id) ? prev.map(x => x.id === t.id ? { ...x, ...t } : x) : [t, ...prev]);
+  };
+
+  // Contador de mensagens não-lidas: busca só metadados (ticket_id/user_id/created_at), sem baixar mídia.
+  async function fetchMsgMeta() {
+    const { data } = await api.from('ticket_messages').select('ticket_id,user_id,created_at');
+    setMsgMeta(Array.isArray(data) ? data : []);
+  }
+
+  // Carrega o "visto" do usuário atual do localStorage
+  useEffect(() => {
+    if (!user) { setSeen({}); return; }
+    try { setSeen(JSON.parse(localStorage.getItem('msgSeen_' + user.id) || '{}')); } catch { setSeen({}); }
+  }, [user]);
+
+  const marcarVisto = (ticketId) => {
+    if (!user || ticketId == null) return;
+    setSeen(prev => {
+      const next = { ...prev, [ticketId]: new Date().toISOString() };
+      localStorage.setItem('msgSeen_' + user.id, JSON.stringify(next));
+      return next;
+    });
+  };
+
+  // Não-lidas por ticket = mensagens de OUTROS mais novas que o último "visto"
+  const unreadByTicket = {};
+  for (const m of msgMeta) {
+    if (!user || m.user_id === user.id) continue;
+    const s = seen[m.ticket_id];
+    if (!s || new Date(m.created_at) > new Date(s)) unreadByTicket[m.ticket_id] = (unreadByTicket[m.ticket_id] || 0) + 1;
   }
 
   useEffect(() => {
@@ -1120,6 +1228,29 @@ export default function App() {
         : null;
       const setorDestino = formData.setor ? Number(formData.setor) : (subSetorEscolhido?.setor_id ?? null);
 
+      // Quem RECEBE direto = gerente do setor de destino (ou responsável do sub-setor). O criador NÃO escolhe;
+      // o gerente é quem depois designa quem vai atender.
+      const gerenteDoDestino = () => {
+        if (formData.platform) {
+          const r = allUsers.find(u => String(u.system_id) === String(formData.platform) && u.role === 'responsavel_subsetor');
+          if (r) return r.name;
+        }
+        const g = allUsers.find(u => String(u.setor_id) === String(setorDestino) && u.role === 'gerente');
+        if (g) return g.name;
+        // fallback legado: primary_responsibles do sub-setor/setor
+        const ids = (subSetorEscolhido?.primary_responsibles?.length ? subSetorEscolhido.primary_responsibles
+          : (setoresList.find(s => String(s.id) === String(setorDestino))?.primary_responsibles || []));
+        return allUsers.find(u => u.id === ids[0])?.name || null;
+      };
+
+      // Config "time pega a demanda": lê o auto_pool FRESCO do banco (a config pode ter mudado em outra sessão,
+      // então não dá pra confiar no setoresList local). Se o setor OU o sub-setor de destino estiver ligado,
+      // a demanda já nasce ABERTA AO TIME (open_pool, sem dono) e notifica os funcionários.
+      const setorObj = setoresList.find(s => String(s.id) === String(setorDestino));
+      const setorAuto = setorDestino != null ? await api.from('setores').select('auto_pool').eq('id', setorDestino).single() : null;
+      const subAuto = formData.platform ? await api.from('systems').select('auto_pool').eq('id', formData.platform).single() : null;
+      const autoPool = !!setorAuto?.data?.auto_pool || !!subAuto?.data?.auto_pool;
+
       const { data, error } = await api
         .from('tickets')
         .insert([{
@@ -1128,7 +1259,8 @@ export default function App() {
           setor_id: setorDestino,
           origin_setor_id: user?.setor_id || null, // setor de origem = setor de quem abriu
           platform: formData.platform || null, // id do sub-setor (só quando o setor ramifica)
-          responsible: formData.responsible || null,
+          responsible: autoPool ? null : gerenteDoDestino(),
+          open_pool: autoPool ? 1 : 0,
           attachments: uploadedAttachments,
           status: 'backlog',
           urgency: formData.urgency || 'leve',
@@ -1137,6 +1269,11 @@ export default function App() {
         .select();
 
       if (error) throw new Error('Erro no banco: ' + error.message);
+
+      // Aberta ao time → avisa os colaboradores do setor pra puxarem (mesmo evento do "abrir ao setor")
+      if (autoPool) {
+        socket.emit('ticket_broadcast', { ticketId: data[0].id, setorId: setorDestino, setorName: setorObj?.name, from: user?.name, title: data[0].title });
+      }
 
       await logAction(data[0].id, 'TICKET_CREATED', null, 'backlog');
       // Notificação inicial: e-mail automático pros responsáveis do setor de destino (a demanda é do setor)
@@ -1242,12 +1379,12 @@ export default function App() {
             `Atualização na sua demanda #${ticketId}`,
             (() => {
               const sid = updates.status !== undefined ? updates.status : oldTicket.status;
-              const si = DEV_STATUS.find(s => s.id === sid);
+              const si = statusInfo(sid, setoresList, systemsList);
               return {
                 cabecalho: 'Atualização de Ticket', icone: '🔄', ticketId,
                 titulo: `#${ticketId} — ${oldTicket.title}`,
                 descricao: updates.responsible !== undefined ? `Responsável: ${updates.responsible || 'Sem responsável'}` : undefined,
-                situacao: si?.name || sid, situacaoCor: si?.color || '#0ea5e9',
+                situacao: si.name, situacaoCor: si.color || '#0ea5e9',
                 assinatura: `Atualizado por ${user?.name || 'a equipe'}`,
               };
             })(),
@@ -1271,14 +1408,17 @@ export default function App() {
     const ticketId = Number(ticketIdRaw);
     const oldTickets = [...tickets];
     
+    // Sair de "Resolvido" (ex.: arrastar de volta) zera a finalização
+    const patch = newStatus !== 'resolvido' ? { status: newStatus, finalized: 0 } : { status: newStatus };
+
     // Atualização Otimista
-    setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, status: newStatus } : t));
+    setTickets(prev => prev.map(t => t.id === ticketId ? { ...t, ...patch } : t));
 
     try {
       const oldTicket = oldTickets.find(t => t.id === ticketId);
       const { error } = await api
         .from('tickets')
-        .update({ status: newStatus })
+        .update(patch)
         .eq('id', ticketId);
 
       if (error) throw error;
@@ -1297,8 +1437,8 @@ export default function App() {
             enviarEmail(criador.email, `Atualização na sua demanda #${ticketId}`, {
               cabecalho: 'Atualização de Ticket', icone: '🔄', ticketId,
               titulo: `#${ticketId} — ${oldTicket.title}`,
-              situacao: DEV_STATUS.find(s => s.id === newStatus)?.name || newStatus,
-              situacaoCor: DEV_STATUS.find(s => s.id === newStatus)?.color || '#0ea5e9',
+              situacao: statusInfo(newStatus, setoresList, systemsList).name,
+              situacaoCor: statusInfo(newStatus, setoresList, systemsList).color || '#0ea5e9',
               assinatura: `Atualizado por ${user?.name || 'a equipe'}`,
             }, 'ticket_alterado');
           }
@@ -1310,6 +1450,32 @@ export default function App() {
     }
   };
 
+  // Criador confirma que a demanda foi de fato resolvida → finaliza (fica opaca em "Resolvido")
+  const finalizarTicket = async (ticket) => {
+    setTickets(prev => prev.map(t => t.id === ticket.id ? { ...t, finalized: 1 } : t));
+    const { error } = await api.from('tickets').update({ finalized: 1 }).eq('id', ticket.id);
+    if (error) { setTickets(prev => prev.map(t => t.id === ticket.id ? { ...t, finalized: 0 } : t)); toast.error('Erro ao finalizar.'); return; }
+    socket.emit('status_updated', { id: ticket.id, status: 'resolvido' }); // outros refazem o fetch e veem opaco
+    logAction(ticket.id, 'STATUS_CHANGED', 'resolvido', 'finalizado');
+    toast.success('Demanda finalizada'); playSound('success');
+  };
+
+  // Criador diz que NÃO foi resolvido → observação vai pro chat de quem aceitou e o ticket volta p/ Análise
+  const reabrirTicket = async (ticket, motivo) => {
+    const txt = (motivo || '').trim();
+    if (!txt) { toast.error('Descreva o que ainda falta.'); return; }
+    const msg = `❌ Não resolvido — ${txt}`;
+    const { error } = await api.from('ticket_messages').insert([{ ticket_id: ticket.id, user_id: user.id, message: msg, attachments: [] }]);
+    if (error) { toast.error('Erro ao enviar a observação.'); return; }
+    setTickets(prev => prev.map(t => t.id === ticket.id ? { ...t, status: 'analise', finalized: 0 } : t));
+    await api.from('tickets').update({ status: 'analise', finalized: 0 }).eq('id', ticket.id);
+    logAction(ticket.id, 'STATUS_CHANGED', 'resolvido', 'analise');
+    socket.emit('status_updated', { id: ticket.id, status: 'analise' });
+    const destino = allUsers.find(u => u.name === ticket.responsible)?.id;
+    socket.emit('ticket_message', { ticketId: ticket.id, from: user.name, toUserId: destino }); // some no chat de quem aceitou (+ contador)
+    toast.success('Observação enviada ao responsável'); playSound('success');
+  };
+
   const deleteTicket = (id) => {
     requestConfirm(
       'Excluir Ticket',
@@ -1318,7 +1484,8 @@ export default function App() {
         try {
           const { error } = await api.from('tickets').delete().eq('id', id);
           if (error) throw error;
-          setTickets(tickets.filter(t => t.id !== id));
+          setTickets(prev => prev.filter(t => t.id !== id)); // update funcional (evita closure stale)
+          socket.emit('ticket_deleted', { id }); // avisa os outros clientes (some do Kanban/lista deles)
           toast.success('Ticket excluído');
         } catch (err) {
           toast.error('Erro ao excluir: ' + err.message);
@@ -1349,39 +1516,73 @@ export default function App() {
   };
 
   // Abre o modal de detalhes completo (busca anexos sob demanda)
-  const openTicketDetails = async (t) => {
-    const { data } = await api.from('tickets').select('attachments').eq('id', t.id).single();
-    setViewingTicket({ ...t, attachments: data?.attachments || [] });
-    playSound('open');
-    if (isManager(user?.role)) {
-      await logAction(t.id, 'TICKET_VIEWED_FIRST_TIME', null, null);
+  const openTicketDetails = async (t, readOnly = false) => {
+    setDetalheReadOnly(readOnly);
+    // "visto" (não-lidas) agora é marcado só ao ABRIR O CHAT (página separada), não ao abrir os detalhes.
+    // Mas registra a última visualização do RESPONSÁVEL (read receipt p/ o criador).
+    if (user?.name === t.responsible) {
+      const iso = new Date().toISOString();
+      const mysqlFmt = iso.slice(0, 19).replace('T', ' '); // 'YYYY-MM-DD HH:MM:SS' em UTC p/ o DATETIME
+      api.from('tickets').update({ responsible_seen_at: mysqlFmt }).eq('id', t.id).then(undefined, () => {}); // o builder é thenable, não tem .catch
+      setTickets(prev => prev.map(x => x.id === t.id ? { ...x, responsible_seen_at: iso } : x)); // local em ISO (UTC) p/ o tempo relativo
     }
+    // Abre a página JÁ (attachments = null → skeleton) e busca os anexos (base64 pesado) em 2º plano.
+    setViewingTicket({ ...t, attachments: null });
+    playSound('open');
+    if (isManager(user?.role)) logAction(t.id, 'TICKET_VIEWED_FIRST_TIME', null, null);
+    api.from('tickets').select('attachments').eq('id', t.id).single().then(
+      ({ data }) => setViewingTicket(prev => (prev && prev.id === t.id) ? { ...prev, attachments: data?.attachments || [] } : prev),
+      () => setViewingTicket(prev => (prev && prev.id === t.id) ? { ...prev, attachments: [] } : prev)
+    );
   };
 
   // Passo 1: clique num ticket em Backlog → gate de aceite. Demais → abre os detalhes (passo 2).
   const requestOpenTicket = (t) => {
+    // Quem CRIOU o ticket não aceita/recusa/edita: abre só o acompanhamento (fase, aceite, direcionamento).
+    if (t.created_by === user?.id) { setStatusView(t); return; }
     const canManage = isManager(user?.role);
     if (!canManage) {
       // solicitante (criador), quem recebeu a demanda (responsável) ou compartilhado abre a visão de leitura + chat, sem gate de aceite
       const podeVer = t.created_by === user?.id || t.responsible === user?.name || (Array.isArray(t.shared_with) && t.shared_with.includes(user?.id));
-      if (podeVer) openTicketDetails(t);
+      if (podeVer) { openTicketDetails(t); return; }
+      // demanda ABERTA ao setor → funcionário do setor pode PUXAR (aceitar)
+      if (t.open_pool && t.status === 'backlog' && noSetor(user, t.setor_id, systemsList)) { setAcceptGate(t); return; }
       return;
     }
     if (t.status === 'backlog') { setAcceptGate(t); return; }
     openTicketDetails(t);
   };
 
-  // Aceite (passo 1 → 2): move pra Análise e ABRE os detalhes (onde define tipo/prazo/compartilhar)
+  // Aceite (passo 1 → 2): move pra Análise, vira responsável e fecha o "aberto ao setor" (open_pool)
   const aceitarDoGate = (t) => {
-    const atualizado = { ...t, status: 'analise', responsible: t.responsible || user.name };
-    updateTicketDetails(t.id, { status: 'analise', responsible: t.responsible || user.name });
+    const upd = { status: 'analise', responsible: t.responsible || user.name, open_pool: 0 };
+    updateTicketDetails(t.id, upd);
     setAcceptGate(null);
-    openTicketDetails(atualizado);
+    openTicketDetails({ ...t, ...upd });
   };
 
   const recusarDoGate = (t) => {
     updateTicketDetails(t.id, { status: 'negado' });
     toast.success('Ticket recusado.');
+    setAcceptGate(null);
+  };
+
+  // Encaminhar: direciona a demanda a um colaborador do setor (ele passa a ser o responsável) e sai do backlog.
+  const encaminharDoGate = (t, nome) => {
+    if (!nome) return;
+    updateTicketDetails(t.id, { responsible: nome, status: 'analise' });
+    const alvo = allUsers.find(u => u.name === nome);
+    socket.emit('ticket_assigned', { ticketId: t.id, toUserId: alvo?.id, from: user.name, title: t.title });
+    toast.success(`Encaminhado para ${nome}.`);
+    setAcceptGate(null);
+  };
+
+  // Abrir para o setor: marca open_pool → os colaboradores do setor VEEM e podem PUXAR (aceitar). Segue no backlog, sem dono.
+  const abrirSetorDoGate = (t) => {
+    updateTicketDetails(t.id, { open_pool: 1, responsible: null });
+    const setor = setoresList.find(s => s.id === t.setor_id);
+    socket.emit('ticket_broadcast', { ticketId: t.id, setorId: t.setor_id, setorName: setor?.name, from: user.name, title: t.title });
+    toast.success('Aberto ao setor — colaboradores disponíveis podem puxar a demanda.');
     setAcceptGate(null);
   };
 
@@ -1404,6 +1605,12 @@ export default function App() {
   // No Kanban, quem só ENVIOU (criou, sem atender o escopo) não vê o card — continua vendo na aba Tickets.
   // (includeOwn=false: ignora o "abri este ticket"; admin/escopo/compartilhado seguem valendo)
   const kanbanTickets = filteredTickets.filter(t => canSeeTicket(t, user, setoresList, systemsList, false));
+  const pedidosCount = kanbanTickets.filter(t => t.status === 'backlog').length; // acumulado na coluna Pedidos (badge no menu Kanban)
+
+  // Aba "Ticket": admin vê TODOS; os demais veem só os que ENVIARAM (criaram). Recebidos ficam no Kanban.
+  const enviadosTickets = user?.role === 'admin'
+    ? filteredTickets
+    : filteredTickets.filter(t => t.created_by === user?.id);
 
   // Rota pública de redefinição de senha (link do e-mail)
   if (hash.startsWith('#/reset/')) {
@@ -1439,20 +1646,41 @@ export default function App() {
     <>
       <Toaster position="top-center" toastOptions={{ style: { background: 'var(--surface)', color: 'var(--text-main)', border: '1px solid var(--glass-border)' } }} />
 
-      <AppHeader
-        currentView={view}
-        setView={(v) => {
-          playSound('open');
-          setView(v);
-        }}
-        user={user}
-        theme={theme}
-        toggleTheme={toggleTheme}
-        onLogout={handleLogout}
-      />
+      {/* Esconde a navbar em telas de detalhamento (detalhe do ticket / chat) — foco total; volta pelo botão Voltar */}
+      {!(chatTicket || viewingTicket) && (
+        <AppHeader
+          currentView={view}
+          setView={(v) => {
+            playSound('open');
+            setView(v);
+          }}
+          user={user}
+          theme={theme}
+          toggleTheme={toggleTheme}
+          onLogout={handleLogout}
+          badges={{ kanban: pedidosCount }}
+        />
+      )}
 
       <div className="app-layout">
         <main className="content-area">
+          {chatTicket ? (
+            <TicketChatPage ticket={chatTicket} user={user} allUsers={allUsers} setores={setoresList} systems={systemsList} onBack={() => setChatTicket(null)} />
+          ) : viewingTicket ? (
+            <TicketDetailsModal
+              asPage
+              readOnly={detalheReadOnly}
+              ticket={viewingTicket}
+              unread={unreadByTicket[viewingTicket.id] || 0}
+              onOpenChat={() => { marcarVisto(viewingTicket.id); setChatTicket(viewingTicket); }}
+              onClose={() => { playSound('close'); setViewingTicket(null); setDetalheReadOnly(false); }}
+              onUpdate={updateTicketDetails}
+              systems={systemsList}
+              setores={setoresList}
+              allUsers={allUsers}
+              user={user}
+            />
+          ) : (
           <AnimatePresence mode="wait">
             <motion.div
               key={view}
@@ -1464,7 +1692,7 @@ export default function App() {
             >
               {view === 'tickets' ? (
                 <UserDashboard
-                  tickets={filteredTickets}
+                  tickets={enviadosTickets}
                   isLoading={loading}
                   onOpenModal={() => setIsModalOpen(true)}
                   search={search}
@@ -1474,6 +1702,8 @@ export default function App() {
                   user={user}
                   systems={systemsList}
                   setores={setoresList}
+                  unread={unreadByTicket}
+                  allUsers={allUsers}
                 />
               ) : view === 'users' ? (
                 <UsersView user={user} onDeleteUser={handleDeleteUser} fetchUsers={fetchUsersList} allUsers={allUsers} setores={setoresList} systems={systemsList} />
@@ -1483,6 +1713,7 @@ export default function App() {
                   setSetoresList(setData || []);
                   const { data: sysData } = await api.from('systems').select('*');
                   if (sysData) setSystemsList(sysData);
+                  await fetchUsersList(); // equipe (cargo/lotação) mudou → recarrega usuários
                 }} />
               ) : view === 'kanban' ? (
                 <DevKanban
@@ -1504,7 +1735,7 @@ export default function App() {
                   }}
                 />
               ) : view === 'analytics' ? (
-                <AnalyticsDashboard tickets={filteredTickets} setores={setoresList} />
+                <AnalyticsDashboard tickets={filteredTickets} setores={setoresList} user={user} />
               ) : view === 'logs' ? (
                 <LogsView />
               ) : view === 'config' ? (
@@ -1516,6 +1747,7 @@ export default function App() {
               )}
             </motion.div>
           </AnimatePresence>
+          )}
         </main>
         <AppFooter />
       </div>
@@ -1534,30 +1766,37 @@ export default function App() {
             allUsers={allUsers}
           />
         )}
-        {viewingTicket && (
-          <TicketDetailsModal
-            ticket={viewingTicket}
-            onClose={() => {
-              playSound('close');
-              setViewingTicket(null);
-            }}
-            onUpdate={updateTicketDetails}
-            systems={systemsList}
-            setores={setoresList}
-            allUsers={allUsers}
-            user={user}
-          />
-        )}
+        {/* Detalhes do ticket agora abrem como TELA (content-area), não como modal — ver acima */}
       </AnimatePresence>
 
       {/* Gates FORA do AnimatePresence: portais desmontam na hora (evita overlay preso ao trocar de modal) */}
       {acceptGate && (
         <AcceptGateModal
           ticket={acceptGate}
+          puxar={!isManager(user?.role)}
+          colaboradores={colaboradoresDoSetor(acceptGate.setor_id, setoresList, systemsList, allUsers)
+            .map(id => allUsers.find(u => u.id === id)?.name).filter(n => n && n !== user?.name)}
           onAccept={() => aceitarDoGate(acceptGate)}
+          onEncaminhar={(nome) => encaminharDoGate(acceptGate, nome)}
+          onAbrirSetor={() => abrirSetorDoGate(acceptGate)}
           onReject={() => recusarDoGate(acceptGate)}
-          onViewDetails={() => { const t = acceptGate; setAcceptGate(null); openTicketDetails(t); }}
           onClose={() => setAcceptGate(null)}
+        />
+      )}
+
+      {statusView && (
+        <TicketStatusModal
+          ticket={tickets.find(t => t.id === statusView.id) || statusView}
+          setores={setoresList}
+          systems={systemsList}
+          user={user}
+          allUsers={allUsers}
+          onClose={() => setStatusView(null)}
+          onOpenChat={(t) => { marcarVisto(t.id); setStatusView(null); setChatTicket(t); }}
+          onDelete={(t) => { setStatusView(null); deleteTicket(t.id); }}
+          onVerEnvio={(t) => { setStatusView(null); openTicketDetails(t, true); }}
+          onFinalize={(t) => { setStatusView(null); finalizarTicket(t); }}
+          onReopen={(t, motivo) => { setStatusView(null); reabrirTicket(t, motivo); }}
         />
       )}
 
@@ -1568,18 +1807,25 @@ export default function App() {
 
 // --- Dashboard do Usuário ---
 // Data de entrega (DATE do MySQL vem como ISO) → 'YYYY-MM-DD' local p/ <input type="date">
+// Fuso oficial do sistema: tudo é EXIBIDO em São Paulo (-03), independentemente de onde o usuário está.
+const TZ_SP = 'America/Sao_Paulo';
+const fmtDataSP = (d, opts) => new Date(d).toLocaleDateString('pt-BR', { timeZone: TZ_SP, ...opts });
+const fmtHoraSP = (d, opts = { hour: '2-digit', minute: '2-digit' }) => new Date(d).toLocaleTimeString('pt-BR', { timeZone: TZ_SP, ...opts });
+const fmtDataHoraSP = (d, opts) => new Date(d).toLocaleString('pt-BR', { timeZone: TZ_SP, ...opts });
+// delivery_date é data-calendário ('YYYY-MM-DD', sem hora) — mostra o dia gravado, sem deslocar por fuso.
+const fmtDataPura = (d) => { const s = String(d).slice(0, 10).split('-'); return s.length === 3 ? `${s[2]}/${s[1]}/${s[0]}` : String(d); };
+
 function toDateInput(d) {
   if (!d) return '';
-  const dt = new Date(d);
-  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}/.test(d)) return d.slice(0, 10); // DATE já vem 'YYYY-MM-DD'
+  return new Date(d).toLocaleDateString('en-CA', { timeZone: TZ_SP }); // Date real (ex.: hoje) → data de hoje em SP (YYYY-MM-DD)
 }
 
 // Ticket vencido: passou da data de entrega e ainda está aberto (não resolvido/negado/repassado)
 function isOverdue(ticket) {
   const fechados = ['resolvido', 'negado', 'repassado'];
   if (!ticket.delivery_date || fechados.includes(ticket.status)) return false;
-  const due = new Date(ticket.delivery_date);
-  due.setHours(23, 59, 59, 999); // vence só no fim do dia da entrega
+  const due = new Date(`${String(ticket.delivery_date).slice(0, 10)}T23:59:59-03:00`); // fim do dia da entrega em SP
   return new Date() > due;
 }
 
@@ -1636,17 +1882,34 @@ function SkeletonKanbanCard() {
   );
 }
 
-// Urgência máxima vai pro topo da fila de visualização (ordenação estável: máxima primeiro, resto preservado)
-const maximaPrimeiro = (arr) => [...(arr || [])].sort((a, b) => (b.urgency === URGENCIA_MAXIMA ? 1 : 0) - (a.urgency === URGENCIA_MAXIMA ? 1 : 0));
+// Ordena por URGÊNCIA (máxima → grave → moderado → leve) — quanto mais urgente, mais acima.
+// Estável: dentro da mesma urgência preserva a ordem de entrada (created_at). Padrão em todas as colunas/listas.
+const RANK_URGENCIA = { maxima: 4, grave: 3, moderado: 2, leve: 1 };
+const maximaPrimeiro = (arr) => [...(arr || [])].sort((a, b) => (RANK_URGENCIA[b.urgency] || 0) - (RANK_URGENCIA[a.urgency] || 0));
 
-function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, onTicketClick, user, systems, setores, isLoading }) {
+function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, onTicketClick, user, systems, setores, isLoading, unread = {}, allUsers = [] }) {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  const [, setTick] = useState(0); // re-render periódico p/ o tempo relativo ("há X min") avançar sozinho
 
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 768);
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    const id = setInterval(() => setTick(t => t + 1), 30000); // atualiza "visualizado há X" a cada 30s
+    return () => { window.removeEventListener('resize', handleResize); clearInterval(id); };
   }, []);
+
+  // Compartilhar a demanda no WhatsApp (resumo em texto → wa.me)
+  const compartilharWpp = (t) => {
+    const setorNome = setores.find(s => s.id == t.setor_id)?.name;
+    const linhas = [
+      `*Demanda #${t.id}* — ${t.title}`,
+      `Status: ${statusInfo(t.status, setores, systems).name}`,
+      setorNome ? `Setor: ${setorNome}` : null,
+      donoVisivel(t) ? `Responsável: ${donoVisivel(t)}` : 'Aguardando aceite',
+      t.delivery_date ? `Entrega: ${fmtDataPura(t.delivery_date)}` : null,
+    ].filter(Boolean);
+    window.open(`https://wa.me/?text=${encodeURIComponent(linhas.join('\n'))}`, '_blank');
+  };
 
   return (
     <div className="user-dashboard-view">
@@ -1690,14 +1953,15 @@ function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, onTi
                 alignItems: 'center', 
                 justifyContent: 'space-between', 
                 cursor: (isManager(user?.role) || ticket.created_by === user?.id || (Array.isArray(ticket.shared_with) && ticket.shared_with.includes(user?.id))) ? 'pointer' : 'default',
-                borderLeft: isOverdue(ticket) ? '4px solid #ef4444' : (ticket.created_by !== user?.id ? '4px solid var(--primary)' : 'none')
+                borderLeft: isOverdue(ticket) ? '4px solid #ef4444' : (ticket.created_by !== user?.id ? '4px solid var(--primary)' : 'none'),
+                opacity: ticket.finalized ? 0.6 : 1 // finalizado → aspecto opaco
               }}
               onClick={() => onTicketClick(ticket)}
             >
               <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'center' }}>
                 <div style={{ textAlign: 'center' }}>
                   <span style={{ fontFamily: 'monospace', color: 'var(--primary)', fontWeight: '700', fontSize: '0.9rem', display: 'block' }}>#{ticket.id}</span>
-                  <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{new Date(ticket.created_at).toLocaleDateString('pt-BR')}</span>
+                  <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{fmtDataSP(ticket.created_at)}</span>
                 </div>
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -1707,6 +1971,11 @@ function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, onTi
                       </span>
                     )}
                     <h3 style={{ fontSize: '1.1rem', fontWeight: '600', marginBottom: '4px' }}>{ticket.title}</h3>
+                    {unread[ticket.id] > 0 && (
+                      <span title={`${unread[ticket.id]} mensagem(ns) não lida(s)`} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: '#4f46e5', color: 'white', padding: '2px 8px', borderRadius: '999px', fontSize: '0.65rem', fontWeight: '800' }}>
+                        <MessageSquare size={11} /> {unread[ticket.id]}
+                      </span>
+                    )}
                     {ticket.created_by !== user?.id && ticket.responsible !== user?.name && Array.isArray(ticket.shared_with) && ticket.shared_with.includes(user?.id) && (
                       <span style={{ background: 'var(--primary)', color: 'white', padding: '1px 6px', borderRadius: '4px', fontSize: '0.6rem', fontWeight: '800', textTransform: 'uppercase' }}>
                         Compartilhado
@@ -1715,14 +1984,14 @@ function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, onTi
                   </div>
                   <div style={{ display: 'flex', gap: '12px' }}>
                     <div className="card-info-row">
-                      <LayoutDashboard size={12} /> {ticketOrigem(ticket, setores) ? `${ticketOrigem(ticket, setores)} → ` : ''}{ticketDestino(ticket, setores, systems)}
+                      <LayoutDashboard size={12} /> {ticketDestino(ticket, setores, systems)}
                     </div>
                     <div className="card-info-row">
-                      <Clock size={12} /> {new Date(ticket.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                      <UserIcon size={12} /> {ticket.responsible_seen_at ? `visualizado ${tempoRelativo(ticket.responsible_seen_at)}` : 'não visualizado'}
                     </div>
                     {ticket.delivery_date && (
                       <div className="card-info-row" style={{ color: isOverdue(ticket) ? '#ef4444' : undefined, fontWeight: isOverdue(ticket) ? 700 : undefined }}>
-                        <Calendar size={12} /> Entrega {new Date(ticket.delivery_date).toLocaleDateString('pt-BR')}{isOverdue(ticket) ? ' • vencido' : ''}
+                        <Calendar size={12} /> Entrega {fmtDataPura(ticket.delivery_date)}{isOverdue(ticket) ? ' • vencido' : ''}
                       </div>
                     )}
                   </div>
@@ -1733,8 +2002,17 @@ function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, onTi
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(0,0,0,0.05)', padding: '4px 10px', borderRadius: '8px', width: 'fit-content' }}>
                     <UserIcon size={14} style={{ color: 'var(--text-muted)' }} />
-                    <span style={{ fontSize: '0.8125rem', fontWeight: '500' }}>{ticket.responsible || 'Sem resp.'}</span>
+                    <span style={{ fontSize: '0.8125rem', fontWeight: '500' }}>{donoVisivel(ticket) || 'Aguardando aceite'}</span>
+                    {donoVisivel(ticket) && (() => {
+                      const ru = allUsers.find(u => u.name === ticket.responsible);
+                      return <span title={ru?.is_online ? 'Online' : 'Offline'} style={{ width: '9px', height: '9px', borderRadius: '50%', flexShrink: 0, background: ru?.is_online ? '#10b981' : '#ef4444' }} />;
+                    })()}
                   </div>
+
+                  <button onClick={(e) => { e.stopPropagation(); compartilharWpp(ticket); }} title="Compartilhar no WhatsApp"
+                    style={{ background: 'none', border: 'none', color: '#25D366', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '4px' }}>
+                    <WhatsAppIcon size={18} />
+                  </button>
 
                   {user && user.role === 'admin' && (
                     <button
@@ -1750,8 +2028,13 @@ function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, onTi
                   )}
                 </div>
 
-                <div style={{ textAlign: 'right' }}>
-                  <StatusBadge id={ticket.status} />
+                <div style={{ textAlign: 'right', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  {ticket.finalized && (
+                    <span style={{ background: 'rgba(16,185,129,0.15)', color: '#10b981', padding: '3px 8px', borderRadius: '6px', fontSize: '0.65rem', fontWeight: 800, textTransform: 'uppercase' }}>
+                      ✓ Finalizado
+                    </span>
+                  )}
+                  <StatusBadge id={ticket.status} setores={setores} systems={systems} />
                 </div>
               </div>
             </motion.div>
@@ -1792,8 +2075,8 @@ function sortColumn(arr, key, dir = 'asc') {
 
 // Dica secundária por tipo de ordenação (usada na prévia em texto)
 function sortHint(t, key) {
-  if (key === 'entrega') return t.delivery_date ? new Date(t.delivery_date).toLocaleDateString('pt-BR') : 'sem prazo';
-  if (key === 'chegada') return new Date(t.created_at).toLocaleDateString('pt-BR');
+  if (key === 'entrega') return t.delivery_date ? fmtDataPura(t.delivery_date) : 'sem prazo';
+  if (key === 'chegada') return fmtDataSP(t.created_at);
   if (key === 'urgencia') return URGENCY_LEVELS.find(u => u.id === t.urgency)?.name || t.urgency;
   return '';
 }
@@ -1859,6 +2142,15 @@ function ColumnSortModal({ columnName, tickets, initialKey, initialDir, onApply,
       </motion.div>
     </div>,
     document.body
+  );
+}
+
+// Corpo da coluna: preenche toda a altura da coluna e rola verticalmente (scroll invisível) quando há muitos cards.
+function ColunaScroll({ children }) {
+  return (
+    <div className="hide-scrollbar" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', paddingRight: '4px' }}>
+      {children}
+    </div>
   );
 }
 
@@ -1994,7 +2286,7 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
         )}
       </div>
 
-      <div className="kanban-board-container" style={{ display: 'flex', gap: '1rem', flex: 1, overflowX: 'auto', paddingBottom: '1rem' }}>
+      <div className="kanban-board-container" style={{ display: 'flex', gap: '1rem', flex: 1, minHeight: 0, overflowX: 'auto', overflowY: 'hidden', paddingBottom: '1rem', alignItems: 'stretch' }}>
         {isLoading ? (
           DEV_STATUS.map(column => (
             <div key={column.id} className="kanban-column" style={{ minWidth: '300px', background: 'rgba(0,0,0,0.02)', borderRadius: '12px', padding: '1rem', display: 'flex', flexDirection: 'column' }}>
@@ -2047,7 +2339,7 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
                   </div>
                 </h3>
 
-                <div className="hide-scrollbar" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: '4px', maxHeight: 'calc(100vh - 260px)' }}>
+                <ColunaScroll>
                   {columnTickets.map(ticket => {
                     const urgencyColor = URGENCY_LEVELS.find(u => u.id === ticket.urgency)?.color || 'transparent';
                     const responsibleUser = allUsers.find(u => u.name === ticket.responsible);
@@ -2064,18 +2356,24 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
                         className={`glass kanban-card ${ticket.created_by !== user?.id && Array.isArray(ticket.shared_with) && ticket.shared_with.includes(user?.id) ? 'shared-card' : ''}`}
                         style={{
                           padding: '1rem',
+                          flexShrink: 0,
                           cursor: canDrag ? 'grab' : 'pointer',
                           borderLeft: `5px solid ${overdue ? '#ef4444' : urgencyColor}`,
+                          // tom de fundo decorrente da urgência (mais forte na máxima), some no "leve"
+                          background: ticket.urgency && ticket.urgency !== 'leve'
+                            ? `color-mix(in srgb, ${overdue ? '#ef4444' : urgencyColor} ${ticket.urgency === 'maxima' ? 16 : ticket.urgency === 'grave' ? 11 : 7}%, var(--surface))`
+                            : undefined,
                           boxShadow: overdue ? '0 0 0 2px #ef4444, 0 4px 12px rgba(239,68,68,0.15)' : (ticket.created_by !== user?.id ? '0 0 0 2px var(--primary)40, 0 4px 12px rgba(0,0,0,0.1)' : 'none'),
-                          position: 'relative'
+                          position: 'relative',
+                          opacity: ticket.finalized ? 0.55 : 1 // finalizado → aspecto opaco
                         }}
                       >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', marginBottom: '4px', alignItems: 'center' }}>
-                          <span style={{ color: 'var(--primary)', fontWeight: '700' }}>#{ticket.id}</span>
-                          <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                            {ticket.urgency === URGENCIA_MAXIMA && (
-                              <span style={{ background: '#b91c1c', color: 'white', padding: '2px 6px', borderRadius: '4px', fontSize: '0.6rem', fontWeight: '800', textTransform: 'uppercase' }}>
-                                🚨 Máxima
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', marginBottom: '4px', alignItems: 'center', flexWrap: 'nowrap', height: '20px' }}>
+                          <span style={{ color: 'var(--primary)', fontWeight: '700', flexShrink: 0 }}>#{ticket.id}</span>
+                          <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexShrink: 0, whiteSpace: 'nowrap' }}>
+                            {ticket.finalized && (
+                              <span style={{ background: 'rgba(16,185,129,0.15)', color: '#10b981', padding: '2px 6px', borderRadius: '4px', fontSize: '0.6rem', fontWeight: '800', textTransform: 'uppercase' }}>
+                                ✓ Finalizado
                               </span>
                             )}
                             {ticket.created_by !== user?.id && ticket.responsible !== user?.name && Array.isArray(ticket.shared_with) && ticket.shared_with.includes(user?.id) && (
@@ -2083,32 +2381,41 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
                                 Compartilhado
                               </span>
                             )}
-                            <span style={{ color: 'var(--text-muted)', fontWeight: '600' }}>{ticketOrigem(ticket, setores) ? `${ticketOrigem(ticket, setores)} → ` : ''}{ticketDestino(ticket, setores, systems)}</span>
+                            {(() => {
+                              const urg = URGENCY_LEVELS.find(u => u.id === ticket.urgency);
+                              return urg ? (
+                                <span style={{ background: urg.color + '22', color: urg.color, padding: '2px 8px', borderRadius: '4px', fontSize: '0.6rem', fontWeight: '800', textTransform: 'uppercase' }}>
+                                  {ticket.urgency === URGENCIA_MAXIMA ? '🚨 ' : ''}{urg.name}
+                                </span>
+                              ) : null;
+                            })()}
                           </div>
                         </div>
-                        <h4 style={{ fontSize: '0.9rem', fontWeight: '600', marginBottom: '8px' }}>{ticket.title}</h4>
-                        {ticket.ticket_type && <div style={{ marginBottom: '8px' }}><TipoBadge ticket={ticket} /></div>}
-                        {ticket.delivery_date && (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.65rem', fontWeight: 700, marginBottom: '8px', color: overdue ? '#ef4444' : 'var(--text-muted)' }}>
-                            <Calendar size={12} /> Entrega {new Date(ticket.delivery_date).toLocaleDateString('pt-BR')}{overdue ? ' • vencido' : ''}
-                          </div>
-                        )}
+                        {/* Título fixo em 2 linhas → mesma altura com título curto ou longo */}
+                        <h4 style={{ fontSize: '0.9rem', fontWeight: '600', marginBottom: '8px', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: '1.2em', minHeight: '2.4em' }}>{ticket.title}</h4>
+                        {/* Tipo e Prazo SEMPRE presentes com ALTURA FIXA (placeholder quando vazio) → todos os cards idênticos */}
+                        <div style={{ display: 'flex', alignItems: 'center', height: '22px', marginBottom: '8px', overflow: 'hidden' }}>
+                          {ticket.ticket_type ? <TipoBadge ticket={ticket} /> : <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>Sem tipo</span>}
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.65rem', fontWeight: 700, height: '16px', marginBottom: '8px', overflow: 'hidden', color: overdue ? '#ef4444' : 'var(--text-muted)' }}>
+                          <Calendar size={12} /> {ticket.delivery_date ? `Entrega ${fmtDataPura(ticket.delivery_date)}${overdue ? ' • vencido' : ''}` : 'Sem prazo definido'}
+                        </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{new Date(ticket.created_at).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                          <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{fmtDataHoraSP(ticket.created_at, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
 
                           <div className="kanban-card-responsible">
-                            <div className="responsible-name">{ticket.responsible || 'Sem responsável'}</div>
+                            <div className="responsible-name">{donoVisivel(ticket) || 'Aguardando aceite'}</div>
                             <img
-                              src={responsibleUser?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${ticket.responsible || 'guest'}`}
+                              src={donoVisivel(ticket) ? (responsibleUser?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${ticket.responsible}`) : 'https://api.dicebear.com/7.x/avataaars/svg?seed=guest'}
                               className="responsible-avatar-mini"
-                              alt={ticket.responsible}
+                              alt={donoVisivel(ticket) || 'Aguardando aceite'}
                             />
                           </div>
                         </div>
                       </motion.div>
                     );
                   })}
-                </div>
+                </ColunaScroll>
               </div>
             );
           })
@@ -2162,8 +2469,10 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
 
 // --- Modal de Criação ---
 // --- Gate de aceite: pergunta se aceita ANTES de abrir os detalhes (aceite → Análise) ---
-function AcceptGateModal({ ticket, onAccept, onReject, onViewDetails, onClose }) {
+function AcceptGateModal({ ticket, puxar = false, colaboradores = [], onAccept, onEncaminhar, onAbrirSetor, onReject, onClose }) {
   const [mounted, setMounted] = useState(false);
+  const [modoEncaminhar, setModoEncaminhar] = useState(false);
+  const [escolhido, setEscolhido] = useState('');
   useEffect(() => setMounted(true), []);
   if (!mounted) return null;
   return createPortal(
@@ -2171,7 +2480,7 @@ function AcceptGateModal({ ticket, onAccept, onReject, onViewDetails, onClose })
       <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="glass modal" style={{ width: '440px', maxWidth: '94vw', padding: '1.75rem' }} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
           <div>
-            <span style={{ fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 800, letterSpacing: '0.05em' }}>Aceitar ticket · #{ticket.id}</span>
+            <span style={{ fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 800, letterSpacing: '0.05em' }}>{puxar ? 'Pegar demanda' : 'Aceitar ticket'} · #{ticket.id}</span>
             <h3 style={{ margin: '2px 0 0', fontSize: '1.2rem', fontWeight: 800 }}>{ticket.title}</h3>
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={20} /></button>
@@ -2182,15 +2491,377 @@ function AcceptGateModal({ ticket, onAccept, onReject, onViewDetails, onClose })
           </p>
         )}
         <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', margin: '0 0 1.5rem', lineHeight: 1.5 }}>
-          Você aceita atender este ticket? Ao aceitar, você verá os detalhes completos para classificar e definir o prazo.
+          {puxar
+            ? 'Esta demanda foi aberta ao setor. Ao pegá-la, você passa a ser o responsável.'
+            : 'Você aceita atender este ticket? Ao aceitar, você verá os detalhes completos para classificar e definir o prazo.'}
         </p>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <button className="btn btn-primary" style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }} onClick={onAccept}>
-            <CheckSquare size={16} /> Aceitar ticket
+            <CheckSquare size={16} /> {puxar ? 'Pegar esta demanda' : 'Aceitar ticket'}
           </button>
-          <button className="btn btn-ghost" style={{ width: '100%' }} onClick={onViewDetails}>Ver detalhes primeiro</button>
-          <button className="btn btn-ghost" style={{ width: '100%', color: '#ef4444' }} onClick={onReject}>Recusar ticket</button>
+
+          {/* Ações de gerente (encaminhar / abrir setor / recusar) — não aparecem no modo "puxar" do funcionário */}
+          {!puxar && (
+            <>
+              {!modoEncaminhar ? (
+                <button className="btn btn-ghost" style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }} onClick={() => setModoEncaminhar(true)}>
+                  <UserPlus size={16} /> Encaminhar ticket
+                </button>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '10px', border: '1px solid var(--glass-border)', borderRadius: '12px', background: 'rgba(0,0,0,0.02)' }}>
+                  <select value={escolhido} onChange={e => setEscolhido(e.target.value)} style={{ margin: 0, fontSize: '0.85rem', padding: '8px' }} autoFocus>
+                    <option value="">Escolher colaborador do setor...</option>
+                    {colaboradores.map(n => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                  {colaboradores.length === 0 && <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>Nenhum colaborador neste setor.</span>}
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => { setModoEncaminhar(false); setEscolhido(''); }}>Cancelar</button>
+                    <button className="btn btn-primary" style={{ flex: 1 }} disabled={!escolhido} onClick={() => onEncaminhar(escolhido)}>Direcionar</button>
+                  </div>
+                </div>
+              )}
+              <button className="btn btn-ghost" style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }} onClick={onAbrirSetor}>
+                📢 Abrir para o setor puxar
+              </button>
+              <button className="btn btn-ghost" style={{ width: '100%', color: '#ef4444' }} onClick={onReject}>Recusar ticket</button>
+            </>
+          )}
         </div>
+      </motion.div>
+    </div>,
+    document.body
+  );
+}
+
+// --- Chat da demanda (bate e volta): só solicitante e responsável postam; os demais leem. Reusado no detalhe e no acompanhamento. ---
+// ponytail: gate client-side, como todo o app; /api/data não valida quem posta (frente separada).
+function TicketChat({ ticket, user, allUsers = [], fill = false }) {
+  const [messages, setMessages] = useState([]);
+  const [novaMsg, setNovaMsg] = useState('');
+  const [anexos, setAnexos] = useState([]); // pendentes: {url(base64),type,name}
+  const [enviando, setEnviando] = useState(false);
+  const [preparandoAnexos, setPreparandoAnexos] = useState(false); // convertendo arquivo(s) → base64
+  const [preview, setPreview] = useState(null); // mídia aberta em tela cheia
+  const [loadedAnexos, setLoadedAnexos] = useState({}); // {msgId: [{url,type,name}]} carregados sob demanda
+  const [carregandoAnx, setCarregandoAnx] = useState({}); // {msgId: true} enquanto busca a mídia
+  const canPost = user?.id === ticket.created_by || user?.name === ticket.responsible;
+
+  const fetchMessages = async () => {
+    // NÃO puxa o base64 dos anexos aqui (um vídeo pode ter dezenas de MB e travar o chat).
+    // Traz só o texto + QUANTOS anexos cada msg tem; a mídia pesada é carregada sob demanda (verAnexos).
+    // Ordena por id (PK indexada) — evita filesort que estoura o sort_buffer.
+    const { data } = await api.from('ticket_messages')
+      .select('id,ticket_id,user_id,message,created_at,JSON_LENGTH(attachments) AS anx_count')
+      .eq('ticket_id', ticket.id).order('id', { ascending: true });
+    setMessages(Array.isArray(data) ? data : []);
+  };
+
+  // Carrega o base64 dos anexos de UMA mensagem só quando o usuário pede ver.
+  const verAnexos = async (mid) => {
+    if (carregandoAnx[mid]) return;
+    setCarregandoAnx(prev => ({ ...prev, [mid]: true }));
+    const { data } = await api.from('ticket_messages').select('attachments').eq('id', mid).single();
+    setLoadedAnexos(prev => ({ ...prev, [mid]: Array.isArray(data?.attachments) ? data.attachments : [] }));
+    setCarregandoAnx(prev => { const n = { ...prev }; delete n[mid]; return n; });
+  };
+  useEffect(() => { fetchMessages(); }, [ticket.id]);
+  useEffect(() => {
+    const onMsg = (d) => { if (String(d.ticketId) === String(ticket.id)) fetchMessages(); };
+    socket.on('new_ticket_message', onMsg);
+    return () => socket.off('new_ticket_message', onMsg);
+  }, [ticket.id]);
+
+  // Anexos no MESMO formato do ticket: converte para Base64 e guarda {url,type,name}.
+  // ponytail: base64 em JSON como a criação de ticket já faz; vídeo grande incha a linha — trocar por storage/URL se pesar.
+  const handleFiles = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (!files.length) return;
+    setPreparandoAnexos(true);
+    const toBase64 = (f) => new Promise((resolve, reject) => {
+      const r = new FileReader(); r.readAsDataURL(f);
+      r.onload = () => resolve(r.result); r.onerror = reject;
+    });
+    try {
+      const novos = [];
+      for (const f of files) novos.push({ url: await toBase64(f), type: f.type.startsWith('video/') ? 'video' : 'image', name: f.name });
+      setAnexos(a => [...a, ...novos]);
+    } finally { setPreparandoAnexos(false); }
+  };
+
+  const enviarMsg = async () => {
+    const txt = novaMsg.trim();
+    if (!txt && anexos.length === 0) return;
+    if (enviando || preparandoAnexos) return; // não envia enquanto o anexo ainda está sendo preparado
+    setEnviando(true);
+    const anexosEnvio = anexos;
+    setNovaMsg(''); setAnexos([]);
+    const { error } = await api.from('ticket_messages').insert([{ ticket_id: ticket.id, user_id: user.id, message: txt, attachments: anexosEnvio }]);
+    setEnviando(false);
+    if (error) { toast.error('Erro ao enviar mensagem.'); setNovaMsg(txt); setAnexos(anexosEnvio); return; }
+    await fetchMessages();
+    // avisa o outro lado (criador ↔ responsável) — socket + e-mail (evento "nova_mensagem")
+    const destino = user.id === ticket.created_by ? allUsers.find(u => u.name === ticket.responsible)?.id : ticket.created_by;
+    socket.emit('ticket_message', { ticketId: ticket.id, from: user.name, toUserId: destino });
+    const destinoUser = allUsers.find(u => u.id === destino);
+    if (destinoUser?.email) {
+      fetch('/api/notify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        to: [destinoUser.email],
+        subject: `Nova mensagem na demanda #${ticket.id}`,
+        email: {
+          cabecalho: 'Nova Mensagem', icone: '💬', ticketId: ticket.id,
+          titulo: `#${ticket.id} — ${ticket.title}`,
+          mensagem: txt || (anexosEnvio.length ? `[${anexosEnvio.length} anexo(s)]` : ''),
+          assinatura: `De ${user.name}`,
+        },
+        evento: 'nova_mensagem'
+      }) }).catch(() => {});
+    }
+    playSound('success');
+  };
+
+  const threadStyle = fill
+    ? { display: 'flex', flexDirection: 'column', gap: '10px', flex: 1, minHeight: 0, overflowY: 'auto', padding: '4px' }
+    : { display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '320px', overflowY: 'auto', padding: '4px' };
+
+  return (
+    <>
+      <MediaPreviewModal media={preview} onClose={() => setPreview(null)} />
+
+      {/* Thread do bate e volta */}
+      <div className="hide-scrollbar" style={threadStyle}>
+        {messages.length === 0 && (
+          <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic', textAlign: 'center', padding: '0.5rem 0' }}>
+            {canPost ? 'Sem mensagens ainda. Peça ou envie detalhes abaixo.' : 'Sem mensagens ainda. Só o solicitante e o responsável conversam aqui.'}
+          </p>
+        )}
+        {messages.map(m => {
+          const autor = allUsers.find(u => u.id === m.user_id);
+          const meu = m.user_id === user?.id;
+          const nAnexos = Number(m.anx_count) || 0;
+          const anx = loadedAnexos[m.id]; // undefined = ainda não carregado; array = carregado
+          return (
+            <div key={m.id} style={{ display: 'flex', flexDirection: 'column', alignItems: meu ? 'flex-end' : 'flex-start' }}>
+              <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginBottom: '2px' }}>
+                {autor?.name || 'Usuário'} · {fmtDataHoraSP(m.created_at, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+              </div>
+              {nAnexos > 0 && !anx && (
+                carregandoAnx[m.id] ? (
+                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', marginBottom: m.message ? '4px' : 0, padding: '6px 12px', borderRadius: '10px', border: '1px solid var(--glass-border)', background: 'rgba(0,0,0,0.04)', color: 'var(--text-muted)', fontSize: '0.8rem', fontWeight: 600 }}>
+                    <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: 'linear' }} style={{ display: 'flex' }}>
+                      <RefreshCw size={14} />
+                    </motion.div>
+                    Carregando anexo{nAnexos > 1 ? 's' : ''}…
+                  </div>
+                ) : (
+                  <button onClick={() => verAnexos(m.id)} title="Carregar mídia"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', marginBottom: m.message ? '4px' : 0, padding: '6px 12px', borderRadius: '10px', border: '1px solid var(--glass-border)', background: 'rgba(0,0,0,0.04)', color: 'var(--text-main)', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}>
+                    <Paperclip size={14} /> Ver {nAnexos} anexo{nAnexos > 1 ? 's' : ''}
+                  </button>
+                )
+              )}
+              {anx && anx.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: m.message ? '4px' : 0, justifyContent: meu ? 'flex-end' : 'flex-start' }}>
+                  {anx.map((file, i) => (
+                    <div key={i} onClick={() => setPreview(file)} style={{ width: '140px', height: '140px', borderRadius: '10px', overflow: 'hidden', cursor: 'pointer', border: '1px solid var(--glass-border)', background: 'rgba(0,0,0,0.05)' }}>
+                      {file.type === 'image'
+                        ? <img src={file.url} alt={file.name || ''} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><PlayCircle size={32} color="var(--text-muted)" /></div>}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {m.message && (
+                <div style={{
+                  maxWidth: '85%', padding: '8px 12px', borderRadius: '12px', fontSize: '0.85rem', lineHeight: 1.4, whiteSpace: 'pre-wrap',
+                  background: meu ? 'var(--primary)' : 'rgba(0,0,0,0.05)', color: meu ? 'white' : 'var(--text-main)',
+                  borderTopRightRadius: meu ? '2px' : '12px', borderTopLeftRadius: meu ? '12px' : '2px'
+                }}>
+                  {m.message}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Campo de envio — só solicitante/recebedor; demais acompanham (read-only) */}
+      {canPost ? (
+        <div style={{ marginTop: '12px' }}>
+          {anexos.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
+              {anexos.map((file, i) => (
+                <div key={i} style={{ position: 'relative', width: '64px', height: '64px', borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--glass-border)', background: 'rgba(0,0,0,0.05)' }}>
+                  {file.type === 'image'
+                    ? <img src={file.url} alt={file.name || ''} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><PlayCircle size={22} color="var(--text-muted)" /></div>}
+                  <button onClick={() => setAnexos(a => a.filter((_, j) => j !== i))} title="Remover"
+                    style={{ position: 'absolute', top: '2px', right: '2px', width: '18px', height: '18px', borderRadius: '50%', border: 'none', background: 'rgba(0,0,0,0.6)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}>
+                    <X size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <input type="file" id={`chat-file-${ticket.id}`} className="hidden" multiple accept="image/*,video/*" onChange={handleFiles} />
+            <label htmlFor={`chat-file-${ticket.id}`} className="icon-btn" title="Anexar imagem ou vídeo" style={{ flex: '0 0 auto', cursor: 'pointer' }}>
+              <Paperclip size={18} />
+            </label>
+            <input
+              value={novaMsg}
+              onChange={e => setNovaMsg(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); enviarMsg(); } }}
+              placeholder="Escreva uma mensagem..."
+              style={{ flex: 1, margin: 0, fontSize: '0.85rem' }}
+            />
+            <button className="btn btn-primary" style={{ flex: '0 0 auto' }} onClick={enviarMsg} disabled={enviando || preparandoAnexos}>
+              {preparandoAnexos ? 'Carregando…' : 'Enviar'}
+            </button>
+          </div>
+          {preparandoAnexos && (
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: 'linear' }} style={{ display: 'flex' }}><RefreshCw size={12} /></motion.div>
+              Preparando anexo… aguarde para enviar.
+            </div>
+          )}
+        </div>
+      ) : (
+        <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontStyle: 'italic', marginTop: '10px', textAlign: 'center' }}>
+          Você acompanha a conversa (somente leitura).
+        </p>
+      )}
+    </>
+  );
+}
+
+// --- Tela dedicada (página) de conversa da demanda: ocupa a área de conteúdo, com voltar ---
+function TicketChatPage({ ticket, user, allUsers = [], setores = [], systems = [], onBack }) {
+  const fase = statusInfo(ticket.status, setores, systems);
+  const tipo = TICKET_TYPES.find(t => t.id === ticket.ticket_type);
+  const chipStyle = (cor) => ({ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '3px 10px', borderRadius: '999px', fontSize: '0.72rem', fontWeight: 700, background: (cor || '#6366f1') + '1f', color: cor || 'var(--text-main)', border: `1px solid ${(cor || '#6366f1')}33` });
+  return (
+    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} style={{ height: '100%', display: 'flex', flexDirection: 'column', width: '100%' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '1.25rem', flex: '0 0 auto' }}>
+        <button className="icon-btn" onClick={onBack} title="Voltar"><ArrowLeft size={20} /></button>
+        <div style={{ minWidth: 0 }}>
+          <span style={{ fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 800, letterSpacing: '0.05em' }}>Conversa da demanda · #{ticket.id}</span>
+          <h2 style={{ margin: '2px 0 6px', fontSize: '1.4rem', fontWeight: 800 }}>{ticket.title}</h2>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
+            <span style={chipStyle(fase.color)}>{fase.name}</span>
+            {tipo && <span style={chipStyle(tipo.color)}>{tipo.name}</span>}
+            <span style={chipStyle(isOverdue(ticket) ? '#ef4444' : null)}>
+              <Calendar size={12} /> {ticket.delivery_date ? `Entrega ${fmtDataPura(ticket.delivery_date)}` : 'Sem prazo'}{isOverdue(ticket) ? ' • vencido' : ''}
+            </span>
+          </div>
+        </div>
+      </div>
+      <div className="glass" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: '1.25rem', border: '1px solid var(--glass-border)' }}>
+        <TicketChat ticket={ticket} user={user} allUsers={allUsers} fill />
+      </div>
+    </motion.div>
+  );
+}
+
+// --- Acompanhamento do criador: só leitura (fase, aceite e direcionamento). Sem aceitar/recusar/editar. ---
+function TicketStatusModal({ ticket, setores = [], systems = [], user, allUsers = [], onClose, onOpenChat, onDelete, onVerEnvio, onFinalize, onReopen }) {
+  const [mounted, setMounted] = useState(false);
+  const [motivo, setMotivo] = useState('');
+  const [recusando, setRecusando] = useState(false); // criador abriu o campo "não foi resolvido"
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return null;
+  const podeExcluir = ticket.status === 'backlog' && ticket.created_by === user?.id; // só o criador, e só enquanto não aceito
+  // Criador precisa confirmar se a demanda entregue foi mesmo resolvida (só enquanto não finalizada)
+  const precisaConfirmar = ticket.status === 'resolvido' && !ticket.finalized && ticket.created_by === user?.id;
+
+  const fase = statusInfo(ticket.status, setores, systems);
+  const setorDestino = setores.find(s => s.id == ticket.setor_id);
+  const aceite = ticket.status === 'backlog' ? { txt: 'Aguardando aceite', cor: '#f59e0b' }
+    : ticket.status === 'negado' ? { txt: 'Recusado', cor: '#ef4444' }
+    : ticket.status === 'repassado' ? { txt: 'Repassado', cor: '#3b82f6' }
+    : { txt: 'Aceito', cor: '#10b981' };
+
+  const Linha = ({ label, children }) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', padding: '10px 0', borderBottom: '1px solid var(--glass-border)' }}>
+      <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>{label}</span>
+      <span style={{ fontSize: '0.85rem', fontWeight: 700, textAlign: 'right' }}>{children}</span>
+    </div>
+  );
+
+  return createPortal(
+    <div className="overlay" style={{ alignItems: 'center', padding: '1rem' }} onClick={onClose}>
+      <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="glass modal" style={{ width: '440px', maxWidth: '94vw', padding: '1.75rem' }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
+          <div>
+            <span style={{ fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 800, letterSpacing: '0.05em' }}>Acompanhamento · #{ticket.id}</span>
+            <h3 style={{ margin: '2px 0 0', fontSize: '1.2rem', fontWeight: 800 }}>{ticket.title}</h3>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={20} /></button>
+        </div>
+
+        <Linha label="Fase atual">
+          <span className="badge" style={{ background: (fase.color || '#6366f1') + '22', color: fase.color || '#6366f1', padding: '4px 10px' }}>{fase.name}</span>
+        </Linha>
+        <Linha label="Situação">
+          {ticket.finalized
+            ? <span style={{ color: '#10b981' }}>✓ Finalizado</span>
+            : <span style={{ color: aceite.cor }}>{aceite.txt}</span>}
+        </Linha>
+        <Linha label="Direcionado para">
+          {donoVisivel(ticket) ? donoVisivel(ticket) : <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>{ticket.status === 'backlog' ? 'Aguardando aceite' : 'Ainda não direcionado'}</span>}
+        </Linha>
+        {setorDestino && <Linha label="Setor de destino">{setorDestino.name}</Linha>}
+        {ticket.delivery_date && <Linha label="Prazo de entrega">{fmtDataPura(ticket.delivery_date)}</Linha>}
+
+        {/* Confirmação do criador: a demanda foi resolvida de fato? (aparece quando chega em Resolvido) */}
+        {precisaConfirmar && (
+          <div style={{ marginTop: '1.25rem', padding: '1rem', borderRadius: '12px', border: '1px solid rgba(16,185,129,0.35)', background: 'rgba(16,185,129,0.06)' }}>
+            <p style={{ margin: '0 0 0.75rem', fontSize: '0.9rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <CheckCircle size={16} color="#10b981" /> A demanda foi resolvida de fato?
+            </p>
+            {!recusando ? (
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button className="btn btn-primary" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }} onClick={() => onFinalize && onFinalize(ticket)}>
+                  <CheckCircle size={15} /> Sim, finalizar
+                </button>
+                <button className="btn btn-ghost" style={{ flex: 1, color: '#ef4444' }} onClick={() => setRecusando(true)}>Não foi resolvido</button>
+              </div>
+            ) : (
+              <div>
+                <textarea value={motivo} onChange={e => setMotivo(e.target.value)} rows={3} autoFocus
+                  placeholder="O que ainda falta? A observação vai pro chat de quem aceitou e a demanda volta para Análise."
+                  style={{ width: '100%', resize: 'vertical', fontSize: '0.85rem' }} />
+                <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                  <button className="btn btn-ghost" style={{ flex: '0 0 auto' }} onClick={() => { setRecusando(false); setMotivo(''); }}>Voltar</button>
+                  <button className="btn btn-primary" style={{ flex: 1, background: '#ef4444', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+                    onClick={() => { if (!motivo.trim()) { toast.error('Descreva o que ainda falta.'); return; } onReopen && onReopen(ticket, motivo); }}>
+                    <ArrowRight size={15} /> Enviar e reabrir
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Ver o que foi enviado → abre a tela de detalhes em modo leitura (sem painel de ações) */}
+        <button className="btn btn-ghost" style={{ width: '100%', marginTop: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }} onClick={() => onVerEnvio && onVerEnvio(ticket)}>
+          <AlignLeft size={16} /> Ver o que foi enviado
+        </button>
+
+        {/* Conversa só existe depois que alguém ACEITA (há responsável); em backlog não aparece */}
+        {donoVisivel(ticket) && (
+          <button className="btn btn-primary" style={{ width: '100%', marginTop: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }} onClick={() => onOpenChat(ticket)}>
+            <MessageSquare size={16} /> Abrir conversa com o responsável
+          </button>
+        )}
+
+        {podeExcluir && (
+          <button className="btn btn-ghost" style={{ width: '100%', marginTop: '0.75rem', color: '#ef4444', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }} onClick={() => onDelete && onDelete(ticket)}>
+            <Trash2 size={16} /> Excluir demanda
+          </button>
+        )}
+
+        <button className="btn btn-ghost" style={{ width: '100%', marginTop: '0.75rem' }} onClick={onClose}>Fechar</button>
       </motion.div>
     </div>,
     document.body
@@ -2331,7 +3002,7 @@ function TicketModal({ onClose, onSubmit, systems, setores = [], user, allUsers 
   const handleSubmit = (e) => {
     e.preventDefault();
     const precisaSistema = setorSystems.length > 0;
-    if (!formData.title || !formData.description || !formData.setor || !formData.responsible || (precisaSistema && !formData.platform)) {
+    if (!formData.title || !formData.description || !formData.setor || (precisaSistema && !formData.platform)) {
       toast.error('Preencha os campos obrigatórios.');
       return;
     }
@@ -2372,9 +3043,12 @@ function TicketModal({ onClose, onSubmit, systems, setores = [], user, allUsers 
               <option value="">Selecione o setor...</option>
               {setoresDestino.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
+            <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <UserPlus size={13} /> A demanda vai direto para o <b>gerente do setor</b>, que designa quem vai atender.
+            </p>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: setorSystems.length > 0 ? '1fr 1fr' : '1fr', gap: '1rem' }}>
             {setorSystems.length > 0 && (
               <div className="form-group">
                 <label>Sub-Setor</label>
@@ -2384,18 +3058,6 @@ function TicketModal({ onClose, onSubmit, systems, setores = [], user, allUsers 
                 </select>
               </div>
             )}
-
-            <div className="form-group">
-              <label>Responsável</label>
-              <select
-                value={formData.responsible}
-                onChange={e => setFormData({ ...formData, responsible: e.target.value })}
-                disabled={!formData.setor || (setorSystems.length > 0 && !formData.platform)}
-              >
-                <option value="">Selecione...</option>
-                {respOptions.map(r => <option key={r} value={r}>{r}</option>)}
-              </select>
-            </div>
 
             <div className="form-group">
               <label>Urgência</label>
@@ -2452,7 +3114,7 @@ function TicketModal({ onClose, onSubmit, systems, setores = [], user, allUsers 
   );
 }
 
-function TicketDetailsModal({ ticket, onClose, onUpdate, systems, setores = [], allUsers, user }) {
+function TicketDetailsModal({ ticket, onClose, onUpdate, systems, setores = [], allUsers, user, asPage = false, unread = 0, onOpenChat, readOnly = false }) {
   const [urgency, setUrgency] = useState(ticket.urgency || '');
   const [tipo, setTipo] = useState(ticket.ticket_type || '');
   const [statusSel, setStatusSel] = useState(ticket.status);
@@ -2475,62 +3137,22 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, setores = [], 
 
   const creator = allUsers.find(u => u.id === ticket.created_by);
 
-  // Compartilhamento: colegas do MESMO setor do responsável (aparecem no Kanban se compartilhado)
+  // Compartilhamento: colegas do MESMO setor do responsável (aparecem no Kanban se compartilhado).
+  // Se quem compartilha é FUNCIONÁRIO, mostra só outros FUNCIONÁRIOS (esconde o gerente).
   const respUser = allUsers.find(u => u.name === ticket.responsible);
   const shareCandidates = allUsers.filter(u =>
     respUser?.setor_id != null && String(u.setor_id) === String(respUser.setor_id) &&
-    u.name !== ticket.responsible && !sharedWith.includes(u.id)
+    u.name !== ticket.responsible && !sharedWith.includes(u.id) &&
+    (user?.role !== 'funcionario' || u.role === 'funcionario')
   );
 
   // Só quem atende (gerente/responsáveis) e admin aceita e define/reagenda a entrega
   const canManage = isManager(user?.role);
+  const podeEditarPrazo = canManage || user?.name === ticket.responsible; // o RESPONSÁVEL (mesmo funcionário) informa/altera o prazo
   const hoje = toDateInput(new Date());
   const vencido = isOverdue(ticket);
 
-  // --- Chat interno da demanda (bate e volta) ---
-  // Postam só o solicitante (criador) e o recebedor (responsável); os demais que enxergam o ticket só leem.
-  // ponytail: gate client-side, como todo o app; /api/data não valida quem posta (frente separada).
-  const [messages, setMessages] = useState([]);
-  const [novaMsg, setNovaMsg] = useState('');
-  const canPost = user?.id === ticket.created_by || user?.name === ticket.responsible;
-
-  const fetchMessages = async () => {
-    const { data } = await api.from('ticket_messages').select('*').eq('ticket_id', ticket.id).order('created_at', { ascending: true });
-    setMessages(Array.isArray(data) ? data : []);
-  };
-  useEffect(() => { fetchMessages(); }, [ticket.id]);
-  useEffect(() => {
-    const onMsg = (d) => { if (String(d.ticketId) === String(ticket.id)) fetchMessages(); };
-    socket.on('new_ticket_message', onMsg);
-    return () => socket.off('new_ticket_message', onMsg);
-  }, [ticket.id]);
-
-  const enviarMsg = async () => {
-    const txt = novaMsg.trim();
-    if (!txt) return;
-    setNovaMsg('');
-    const { error } = await api.from('ticket_messages').insert([{ ticket_id: ticket.id, user_id: user.id, message: txt }]);
-    if (error) { toast.error('Erro ao enviar mensagem.'); return; }
-    await fetchMessages();
-    // avisa o outro lado (criador ↔ responsável) — socket + e-mail (evento "nova_mensagem")
-    const destino = user.id === ticket.created_by ? allUsers.find(u => u.name === ticket.responsible)?.id : ticket.created_by;
-    socket.emit('ticket_message', { ticketId: ticket.id, from: user.name, toUserId: destino });
-    const destinoUser = allUsers.find(u => u.id === destino);
-    if (destinoUser?.email) {
-      fetch('/api/notify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-        to: [destinoUser.email],
-        subject: `Nova mensagem na demanda #${ticket.id}`,
-        email: {
-          cabecalho: 'Nova Mensagem', icone: '💬', ticketId: ticket.id,
-          titulo: `#${ticket.id} — ${ticket.title}`,
-          mensagem: txt,
-          assinatura: `De ${user.name}`,
-        },
-        evento: 'nova_mensagem'
-      }) }).catch(() => {});
-    }
-    playSound('success');
-  };
+  // Chat da demanda extraído em <TicketChat> (reusado também no acompanhamento do criador).
 
   // --- Atribuição flexível da demanda ---
   const [atribuirA, setAtribuirA] = useState('');
@@ -2564,10 +3186,10 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, setores = [], 
   const compartilharWhatsApp = () => {
     const linhas = [
       `*Demanda #${ticket.id}* — ${ticket.title}`,
-      `Status: ${DEV_STATUS.find(s => s.id === ticket.status)?.name || ticket.status}`,
+      `Status: ${statusInfo(ticket.status, setores, systems).name}`,
       setorDoTicket?.name ? `Setor: ${setorDoTicket.name}` : null,
-      ticket.responsible ? `Responsável: ${ticket.responsible}` : 'Sem responsável',
-      ticket.delivery_date ? `Entrega: ${new Date(ticket.delivery_date).toLocaleDateString('pt-BR')}` : null,
+      donoVisivel(ticket) ? `Responsável: ${donoVisivel(ticket)}` : 'Aguardando aceite',
+      ticket.delivery_date ? `Entrega: ${fmtDataPura(ticket.delivery_date)}` : null,
     ].filter(Boolean);
     window.open(`https://wa.me/?text=${encodeURIComponent(linhas.join('\n'))}`, '_blank');
   };
@@ -2603,8 +3225,8 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, setores = [], 
         )}
       </AnimatePresence>
 
-      {createPortal(
-        <div className="overlay" style={{ padding: '2rem 1rem' }} onClick={onClose}>
+      {(() => {
+        const inner = (
           <motion.div
             initial={{ opacity: 0, scale: 0.98 }}
             animate={{ opacity: 1, scale: 1 }}
@@ -2614,34 +3236,47 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, setores = [], 
               background: 'var(--surface)',
               border: '1px solid var(--glass-border)',
               borderRadius: '16px',
-              maxWidth: '1000px',
+              maxWidth: asPage ? '1500px' : '1000px',
               width: '100%',
+              margin: undefined,
+              maxHeight: asPage ? '88vh' : undefined, // card centralizado (não ocupa a altura toda)
               padding: 0,
               overflow: 'hidden',
               display: 'flex',
               flexDirection: 'column'
             }}
-            onClick={e => e.stopPropagation()}
+            onClick={asPage ? undefined : e => e.stopPropagation()}
           >
             {/* Header Superior - Estilo Trello */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem 1.5rem', background: 'rgba(0,0,0,0.01)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <div className="status-badge-header" style={{ color: DEV_STATUS.find(s => s.id === ticket.status)?.color }}>
-                  {DEV_STATUS.find(s => s.id === ticket.status)?.name || ticket.status}
+                {asPage && <button className="icon-btn" onClick={onClose} title="Voltar"><ArrowLeft size={20} /></button>}
+                <div className="status-badge-header" style={{ color: statusInfo(ticket.status, setores, systems).color }}>
+                  {statusInfo(ticket.status, setores, systems).name}
                 </div>
-                <span style={{ fontSize: '0.85rem', fontWeight: '500', color: 'var(--text-muted)' }}>#{ticket.id}</span>
+                <span style={{ fontSize: '0.85rem', fontWeight: '700', color: 'var(--primary)' }}>#{ticket.id}</span>
+                <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                  criado por <b style={{ color: 'var(--text-main)' }}>{creator?.name || 'Usuário'}</b> em {fmtDataHoraSP(ticket.created_at, { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                </span>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <button onClick={compartilharWhatsApp} title="Compartilhar no WhatsApp" style={{ background: '#25D366', border: 'none', color: 'white', cursor: 'pointer', borderRadius: '8px', padding: '6px 10px', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', fontWeight: 700 }}>
-                  <Share2 size={16} /> WhatsApp
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                {/* Responsável */}
+                <span style={{ fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ fontSize: '0.65rem', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 700 }}>Responsável</span>
+                  <b style={{ color: 'var(--text-main)' }}>{donoVisivel(ticket) || 'Aguardando aceite'}</b>
+                </span>
+                {/* barrinha vertical entre o nome e o ícone */}
+                <span style={{ width: '1px', height: '20px', background: 'var(--glass-border)' }} />
+                {/* WhatsApp só ícone */}
+                <button onClick={compartilharWhatsApp} title="Compartilhar no WhatsApp" style={{ background: 'none', border: 'none', color: '#25D366', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '4px' }}>
+                  <WhatsAppIcon size={20} />
                 </button>
-                <button onClick={onClose} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}><X size={22} /></button>
               </div>
             </div>
 
-            <div className="modal-details-body">
+            <div className="modal-details-body" style={asPage ? { maxHeight: 'none', minHeight: 0, flex: 1 } : undefined}>
               {/* Coluna Esquerda: Conteúdo Principal */}
-              <div className="modal-details-main">
+              <div className="modal-details-main" style={asPage ? { flex: readOnly ? '1 1 100%' : '1 1 50%', minWidth: 0 } : undefined}>
                 <div>
                   <h2 style={{ fontSize: '1.75rem', fontWeight: '800', lineHeight: '1.3', marginBottom: '8px' }}>{ticket.title}</h2>
                 </div>
@@ -2658,8 +3293,17 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, setores = [], 
                   </div>
                 </div>
 
-                {/* Anexos */}
-                {ticket.attachments?.length > 0 && (
+                {/* Anexos — null = ainda carregando (skeleton); [] = sem anexos */}
+                {ticket.attachments === null ? (
+                  <div style={{ marginTop: '1rem' }}>
+                    <div className="modal-section-title"><Paperclip size={20} /> Anexos</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '1rem' }}>
+                      {Array.from({ length: 3 }).map((_, i) => (
+                        <div key={i} className="skeleton" style={{ height: '120px', borderRadius: '12px' }} />
+                      ))}
+                    </div>
+                  </div>
+                ) : ticket.attachments?.length > 0 && (
                   <div style={{ marginTop: '1rem' }}>
                     <div className="modal-section-title">
                       <Paperclip size={20} /> Anexos
@@ -2677,12 +3321,15 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, setores = [], 
                     </div>
                   </div>
                 )}
+
               </div>
 
-              {/* Coluna Direita: Sidebar */}
-              <div className="modal-details-sidebar">
-                <div>
-                  <h3 style={{ fontSize: '0.8rem', fontWeight: '700', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '1rem' }}>Ações de Membro</h3>
+              {/* Coluna Direita: Painel de Ações — oculto no modo leitura (criador vendo o que enviou) */}
+              {!readOnly && (
+              <div className="modal-details-sidebar" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', ...(asPage ? { width: 'auto', flex: '1 1 50%', maxWidth: 'none', minWidth: 0 } : {}) }}>
+                {/* Área rolável das ações */}
+                <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '1.25rem', paddingRight: '2px' }}>
+                  <h3 style={{ fontSize: '0.8rem', fontWeight: '700', textTransform: 'uppercase', color: 'var(--text-muted)', margin: 0 }}>Ações de Membro</h3>
 
                   {/* Pegar demanda: resolvedor no escopo puxa um ticket sem responsável */}
                   {podePegar && (
@@ -2738,26 +3385,27 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, setores = [], 
                       <>
                         <div style={{ fontSize: '0.9rem', fontWeight: 700, color: vencido ? '#ef4444' : (ticket.delivery_date ? 'var(--text-main)' : 'var(--text-muted)') }}>
                           {ticket.delivery_date
-                            ? `Prazo de entrega: ${new Date(ticket.delivery_date).toLocaleDateString('pt-BR')}`
+                            ? `Prazo de entrega: ${fmtDataPura(ticket.delivery_date)}`
                             : 'Nenhum prazo de entrega definido — informe abaixo.'}
                         </div>
                         {vencido && <p style={{ fontSize: '0.75rem', color: '#ef4444', margin: '4px 0 0' }}>Entrega vencida — defina uma nova data.</p>}
-                        {canManage && (rescheduling || vencido || !ticket.delivery_date) ? (
+                        {podeEditarPrazo && (rescheduling || vencido || !ticket.delivery_date) ? (
                           <div style={{ marginTop: '8px' }}>
                             <input type="date" min={hoje} value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} style={{ fontSize: '0.85rem', padding: '8px' }} />
                             <button className="btn btn-primary" style={{ width: '100%', marginTop: '8px', ...(vencido ? { background: '#ef4444', border: 'none' } : {}) }} onClick={handleReschedule}>
                               {vencido ? 'Reagendar entrega' : (ticket.delivery_date ? 'Atualizar prazo' : 'Definir prazo de entrega')}
                             </button>
                           </div>
-                        ) : canManage ? (
+                        ) : podeEditarPrazo ? (
                           <button className="btn btn-ghost" style={{ width: '100%', marginTop: '8px', fontSize: '0.8rem' }} onClick={() => setRescheduling(true)}>Alterar prazo</button>
                         ) : null}
                       </>
                     )}
                   </div>
 
-                  {/* Tipo + Urgência lado a lado */}
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
+                  {/* Classificação: tipo + urgência lado a lado */}
+                  <label style={{ fontSize: '0.75rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Classificação</label>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem', marginTop: '4px' }}>
                     <div className="form-group" style={{ margin: 0 }}>
                       <label style={{ fontSize: '0.75rem' }}>Tipo do ticket</label>
                       <select value={tipo} onChange={e => setTipo(e.target.value)} style={{ padding: '8px', fontSize: '0.85rem' }}>
@@ -2785,11 +3433,12 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, setores = [], 
                   )}
                   <div className="form-group" style={{ position: 'relative' }}>
                     <label style={{ fontSize: '0.75rem' }}>Notas Técnicas</label>
-                    <textarea 
-                      value={devNotes} 
-                      onChange={e => setDevNotes(e.target.value)} 
-                      placeholder="Logs técnicos e observações internas..." 
-                      style={{ minHeight: '120px', fontSize: '0.85rem', padding: '10px' }}
+                    <textarea
+                      value={devNotes}
+                      onChange={e => setDevNotes(e.target.value)}
+                      placeholder="Anotações rápidas..."
+                      rows={2}
+                      style={{ minHeight: '44px', fontSize: '0.85rem', padding: '8px 10px', resize: 'vertical' }}
                     ></textarea>
                   </div>
 
@@ -2841,7 +3490,19 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, setores = [], 
                       <span style={{ fontSize: '0.75rem', fontWeight: '600', color: 'var(--primary)' }}>Você tem acesso compartilhado a este ticket.</span>
                     </div>
                   )}
-                  <button className="btn btn-primary" style={{ width: '100%', marginTop: '0.5rem' }} onClick={() => {
+                </div>
+
+                {/* Rodapé fixo: acessar chat + ação primária, sempre visíveis */}
+                <div style={{ flexShrink: 0, paddingTop: '1rem', marginTop: '0.75rem', borderTop: '1px solid var(--glass-border)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {onOpenChat && (
+                    <button className="btn btn-ghost" style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', position: 'relative' }} onClick={onOpenChat}>
+                      <MessageSquare size={16} /> Acessar Chat
+                      {unread > 0 && (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: '20px', height: '20px', padding: '0 6px', borderRadius: '999px', background: '#4f46e5', color: '#fff', fontSize: '0.7rem', fontWeight: 800 }}>{unread}</span>
+                      )}
+                    </button>
+                  )}
+                  <button className="btn btn-primary" style={{ width: '100%' }} onClick={() => {
                     // Definiu tipo + prazo enquanto em Backlog/Análise → avança para Resolvendo
                     let finalStatus = statusSel;
                     if (tipo && deliveryDate && (finalStatus === 'analise' || finalStatus === 'backlog')) finalStatus = 'resolvendo';
@@ -2854,87 +3515,15 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, setores = [], 
                     onClose();
                   }}>Salvar Alterações</button>
                 </div>
-
-                <div className="form-group" style={{ marginTop: 'auto', marginBottom: '1.5rem' }}>
-                  <label style={{ fontSize: '0.75rem' }}>Responsável</label>
-                  <div style={{ padding: '10px 12px', borderRadius: '10px', background: 'rgba(0,0,0,0.03)', border: '1px solid var(--glass-border)', fontSize: '0.85rem', fontWeight: 600 }}>
-                    {ticket.responsible || 'Sem responsável'}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="modal-section-title" style={{ marginBottom: '1.25rem' }}>
-                    <MessageSquare size={18} /> Conversa da demanda
-                  </div>
-
-                  {/* 1ª entrada: criação do ticket (parte do histórico) */}
-                  <div className="activity-item" style={{ marginBottom: '1rem' }}>
-                    <div style={{
-                      width: '32px', height: '32px', borderRadius: '50%',
-                      background: creator?.role === 'admin' ? 'var(--primary)' : 'var(--success)',
-                      color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: '0.75rem', fontWeight: '800'
-                    }}>
-                      {getInitials(creator?.name)}
-                    </div>
-                    <div className="activity-content">
-                      <div className="activity-user">{creator?.name || "Usuário"}</div>
-                      <div className="activity-text">{ticketOrigem(ticket, setores) ? `criou este ticket (de ${ticketOrigem(ticket, setores)}) para ` : 'criou este ticket para '}{ticketDestino(ticket, setores, systems)}</div>
-                      <div className="activity-time">{new Date(ticket.created_at).toLocaleString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
-                    </div>
-                  </div>
-
-                  {/* Thread do bate e volta */}
-                  <div className="hide-scrollbar" style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '320px', overflowY: 'auto', padding: '4px' }}>
-                    {messages.length === 0 && (
-                      <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic', textAlign: 'center', padding: '0.5rem 0' }}>
-                        {canPost ? 'Sem mensagens ainda. Peça ou envie detalhes abaixo.' : 'Sem mensagens ainda. Só o solicitante e o responsável conversam aqui.'}
-                      </p>
-                    )}
-                    {messages.map(m => {
-                      const autor = allUsers.find(u => u.id === m.user_id);
-                      const meu = m.user_id === user?.id;
-                      return (
-                        <div key={m.id} style={{ display: 'flex', flexDirection: 'column', alignItems: meu ? 'flex-end' : 'flex-start' }}>
-                          <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginBottom: '2px' }}>
-                            {autor?.name || 'Usuário'} · {new Date(m.created_at).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
-                          </div>
-                          <div style={{
-                            maxWidth: '85%', padding: '8px 12px', borderRadius: '12px', fontSize: '0.85rem', lineHeight: 1.4, whiteSpace: 'pre-wrap',
-                            background: meu ? 'var(--primary)' : 'rgba(0,0,0,0.05)', color: meu ? 'white' : 'var(--text-main)',
-                            borderTopRightRadius: meu ? '2px' : '12px', borderTopLeftRadius: meu ? '12px' : '2px'
-                          }}>
-                            {m.message}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {/* Campo de envio — só solicitante/recebedor; demais acompanham (read-only) */}
-                  {canPost ? (
-                    <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
-                      <input
-                        value={novaMsg}
-                        onChange={e => setNovaMsg(e.target.value)}
-                        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); enviarMsg(); } }}
-                        placeholder="Escreva uma mensagem..."
-                        style={{ flex: 1, margin: 0, fontSize: '0.85rem' }}
-                      />
-                      <button className="btn btn-primary" style={{ flex: '0 0 auto' }} onClick={enviarMsg}>Enviar</button>
-                    </div>
-                  ) : (
-                    <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontStyle: 'italic', marginTop: '10px', textAlign: 'center' }}>
-                      Você acompanha a conversa (somente leitura).
-                    </p>
-                  )}
-                </div>
               </div>
+              )}
             </div>
           </motion.div>
-        </div>,
-        document.body
-      )}
+        );
+        return asPage
+          ? <div className="animate-in" style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>{inner}</div>
+          : createPortal(<div className="overlay" style={{ padding: '2rem 1rem' }} onClick={onClose}>{inner}</div>, document.body);
+      })()}
     </>
   );
 }
@@ -2980,7 +3569,7 @@ function MediaPreviewModal({ media, onClose }) {
 // Classifica um ticket com prazo: 'onTime' (resolvido ≤ prazo), 'late' (resolvido depois OU vencido sem resolver), null (pendente no prazo)
 function classifyDelivery(t, logs) {
   if (!t.delivery_date) return null;
-  const due = new Date(t.delivery_date); due.setHours(23, 59, 59, 999);
+  const due = new Date(`${String(t.delivery_date).slice(0, 10)}T23:59:59-03:00`); // fim do dia da entrega em SP
   const resLog = logs
     .filter(l => String(l.ticket_id) === String(t.id) && l.action_type === 'STATUS_CHANGED' && l.new_value === 'resolvido')
     .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
@@ -2992,57 +3581,43 @@ function classifyDelivery(t, logs) {
 
 // Gráfico de linha compacto (SVG inline): entregas no prazo x fora do prazo por semana
 function ProdutividadeChart({ data }) {
-  const series = [
-    { key: 'onTime', label: 'No prazo', color: '#10b981' },
-    { key: 'late', label: 'Fora do prazo', color: '#ef4444' },
-  ];
   if (!data || data.length === 0) {
     return <div style={{ padding: '1.25rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.8rem' }}>Sem entregas com prazo concluído ainda.</div>;
   }
   const totals = data.reduce((a, d) => ({ onTime: a.onTime + d.onTime, late: a.late + d.late }), { onTime: 0, late: 0 });
-  const W = 480, H = 150, padL = 22, padR = 12, padT = 10, padB = 22;
-  const innerW = W - padL - padR, innerH = H - padT - padB;
-  const n = data.length;
-  const yMax = Math.max(1, ...data.map(d => Math.max(d.onTime, d.late)));
-  const x = (i) => padL + (n === 1 ? innerW / 2 : (innerW * i) / (n - 1));
-  const y = (v) => padT + innerH - (innerH * v) / yMax;
-  const fmt = (d) => new Date(d).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-  const points = (key) => data.map((d, i) => `${x(i).toFixed(1)},${y(d[key]).toFixed(1)}`).join(' ');
-  const step = Math.max(1, Math.ceil(yMax / 3));
-  const ticks = [];
-  for (let v = 0; v <= yMax; v += step) ticks.push(v);
+  const geral = totals.onTime + totals.late;
+  const pctGeral = geral ? Math.round((totals.onTime / geral) * 100) : 0;
+  const max = Math.max(1, ...data.map(d => d.onTime + d.late));
+  const fmt = (d) => fmtDataSP(d, { day: '2-digit', month: '2-digit' });
   return (
     <div>
-      {/* Legenda + totais numa linha só */}
-      <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
-        {series.map(s => (
-          <div key={s.key} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>
-            <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: s.color, display: 'inline-block' }} />
-            {s.label} <strong style={{ color: 'var(--text-main)' }}>{totals[s.key]}</strong>
-          </div>
-        ))}
+      {/* Legenda + totais + % geral */}
+      <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>
+          <span style={{ width: '10px', height: '10px', borderRadius: '3px', background: '#10b981', display: 'inline-block' }} /> No prazo <strong style={{ color: 'var(--text-main)' }}>{totals.onTime}</strong>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>
+          <span style={{ width: '10px', height: '10px', borderRadius: '3px', background: '#ef4444', display: 'inline-block' }} /> Fora do prazo <strong style={{ color: 'var(--text-main)' }}>{totals.late}</strong>
+        </div>
+        <div style={{ marginLeft: 'auto', fontSize: '0.8rem', fontWeight: 800, color: pctGeral >= 70 ? '#10b981' : pctGeral >= 40 ? '#f59e0b' : '#ef4444' }}>{pctGeral}% no prazo</div>
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto' }} role="img" aria-label="Entregas no prazo versus fora do prazo por semana">
-        {ticks.map(v => (
-          <g key={v}>
-            <line x1={padL} y1={y(v)} x2={W - padR} y2={y(v)} stroke="var(--glass-border)" strokeWidth="1" />
-            <text x={padL - 5} y={y(v) + 3} textAnchor="end" fontSize="9" fill="var(--text-muted)">{v}</text>
-          </g>
-        ))}
-        {data.map((d, i) => (
-          <text key={i} x={x(i)} y={H - padB + 15} textAnchor="middle" fontSize="9" fill="var(--text-muted)">{fmt(d.date)}</text>
-        ))}
-        {series.map(s => (
-          <g key={s.key}>
-            {n > 1 && <polyline points={points(s.key)} fill="none" stroke={s.color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />}
-            {data.map((d, i) => (
-              <circle key={i} cx={x(i)} cy={y(d[s.key])} r="4" fill={s.color} stroke="var(--surface)" strokeWidth="2">
-                <title>{`Semana de ${fmt(d.date)} — ${s.label}: ${d[s.key]}`}</title>
-              </circle>
-            ))}
-          </g>
-        ))}
-      </svg>
+      {/* Barras empilhadas por semana (verde = no prazo embaixo, vermelho = fora em cima) */}
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: '10px', height: '150px' }}>
+        {data.map((d, i) => {
+          const tot = d.onTime + d.late;
+          const pct = tot ? Math.round((d.onTime / tot) * 100) : 0;
+          return (
+            <div key={i} title={`Semana de ${fmt(d.date)} — no prazo ${d.onTime}, fora ${d.late} (${pct}% no prazo)`}
+              style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%', gap: '4px' }}>
+              <span style={{ fontSize: '0.72rem', fontWeight: 800 }}>{tot}</span>
+              <div style={{ width: '100%', maxWidth: '40px', height: `${(tot / max) * 100}%`, minHeight: '4px', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', borderRadius: '6px 6px 0 0', overflow: 'hidden', background: '#ef4444' }}>
+                <div style={{ height: `${pct}%`, background: '#10b981' }} />
+              </div>
+              <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 600 }}>{fmt(d.date)}</span>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -3069,11 +3644,14 @@ function RankingPessoas({ people }) {
   );
 }
 
-function AnalyticsDashboard({ tickets, setores = [] }) {
+function AnalyticsDashboard({ tickets, setores = [], user }) {
+  const isAdmin = user?.role === 'admin';
+  const setorFixo = !isAdmin && user?.setor_id != null ? String(user.setor_id) : null; // gerente/resp: fixo no próprio setor
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [selectedSetor, setSelectedSetor] = useState(''); // '' = análise geral de todos os setores
+  const [selectedSetor, setSelectedSetor] = useState(setorFixo || ''); // '' = geral (só admin); não-admin já vem no setor dele
   const [selectedResp, setSelectedResp] = useState('');
+  const [periodo, setPeriodo] = useState(30); // dias; 0 = tudo
 
   useEffect(() => {
     const fetchAllLogs = async () => {
@@ -3130,6 +3708,96 @@ function AnalyticsDashboard({ tickets, setores = [] }) {
       .sort((a, b) => b.rate - a.rate || b.total - a.total);
   }, [logs, tickets, selectedSetor]);
 
+  // --- ONDA 1: período + KPIs + status + matriz origem→destino ---
+  const periodBase = React.useMemo(() => {
+    if (!periodo) return tickets;
+    const limite = Date.now() - periodo * 86400000;
+    return tickets.filter(t => new Date(t.created_at).getTime() >= limite);
+  }, [tickets, periodo]);
+
+  const scoped = React.useMemo(() => periodBase.filter(t =>
+    (!selectedSetor || String(t.setor_id) === String(selectedSetor)) &&
+    (!selectedResp || t.responsible === selectedResp)
+  ), [periodBase, selectedSetor, selectedResp]);
+
+  const kpis = React.useMemo(() => {
+    const total = scoped.length;
+    const abertas = scoped.filter(t => ['backlog', 'analise', 'resolvendo'].includes(t.status)).length;
+    const resolvidas = scoped.filter(t => t.status === 'resolvido').length;
+    const aguardando = scoped.filter(t => t.status === 'backlog').length;
+    const vencidas = scoped.filter(t => isOverdue(t)).length;
+    let onTime = 0, late = 0;
+    scoped.filter(t => t.delivery_date).forEach(t => { const o = classifyDelivery(t, logs); if (o === 'onTime') onTime++; else if (o === 'late') late++; });
+    const noPrazo = (onTime + late) ? Math.round((onTime / (onTime + late)) * 100) : null;
+    return { total, abertas, resolvidas, aguardando, vencidas, noPrazo };
+  }, [scoped, logs]);
+
+  const statusDist = React.useMemo(() => {
+    const all = [...DEV_STATUS, ...OTHER_STATUS];
+    const max = Math.max(1, ...all.map(s => scoped.filter(t => t.status === s.id).length));
+    return all.map(s => ({ id: s.id, name: s.name, color: s.color, count: scoped.filter(t => t.status === s.id).length, max })).filter(s => s.count > 0);
+  }, [scoped]);
+
+  const matriz = React.useMemo(() => {
+    const nome = (id) => setores.find(s => s.id == id)?.name || (id == null ? '—' : `#${id}`);
+    const pares = new Map();
+    periodBase.forEach(t => { const k = nome(t.origin_setor_id) + ' → ' + nome(t.setor_id); pares.set(k, (pares.get(k) || 0) + 1); });
+    return [...pares.entries()].map(([k, v]) => ({ k, v })).sort((a, b) => b.v - a.v);
+  }, [periodBase, setores]);
+
+  // --- ONDA 2: tempos médios + taxa de recusa + tendência de volume ---
+  const tempos = React.useMemo(() => {
+    const h = (ms) => ms / 3600000;
+    const fmt = (horas) => horas == null ? '—' : (horas < 24 ? `${horas.toFixed(1)}h` : `${(horas / 24).toFixed(1)}d`);
+    const logsDo = (id, novo) => logs.filter(l => String(l.ticket_id) === String(id) && l.action_type === 'STATUS_CHANGED' && l.new_value === novo);
+    let aceS = 0, aceN = 0, resS = 0, resN = 0, seenS = 0, seenN = 0;
+    scoped.forEach(t => {
+      // aceite: 1º STATUS_CHANGED que sai do backlog (analise)
+      const ace = logs.filter(l => String(l.ticket_id) === String(t.id) && l.action_type === 'STATUS_CHANGED' && l.new_value && l.new_value !== 'backlog')
+        .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))[0];
+      if (ace) { aceS += h(new Date(ace.created_at) - new Date(t.created_at)); aceN++; }
+      // resolução: log resolvido, senão updated_at
+      if (t.status === 'resolvido') {
+        const rl = logsDo(t.id, 'resolvido').sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
+        const resAt = rl ? new Date(rl.created_at) : (t.updated_at ? new Date(t.updated_at) : null);
+        if (resAt) { resS += h(resAt - new Date(t.created_at)); resN++; }
+      }
+      // responsividade: 1ª visualização do responsável
+      if (t.responsible_seen_at) { seenS += h(new Date(t.responsible_seen_at) - new Date(t.created_at)); seenN++; }
+    });
+    return { aceite: aceN ? fmt(aceS / aceN) : '—', resolucao: resN ? fmt(resS / resN) : '—', responsividade: seenN ? fmt(seenS / seenN) : '—' };
+  }, [scoped, logs]);
+
+  const recusa = React.useMemo(() => {
+    const total = scoped.length, neg = scoped.filter(t => t.status === 'negado').length;
+    return total ? Math.round((neg / total) * 100) : null;
+  }, [scoped]);
+
+  const volume = React.useMemo(() => {
+    // Agrupa por DIA DA SEMANA (fuso SP): total de criadas em cada segunda, terça, etc.
+    const ordem = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
+    const mapEn = { Mon: 'Seg', Tue: 'Ter', Wed: 'Qua', Thu: 'Qui', Fri: 'Sex', Sat: 'Sáb', Sun: 'Dom' };
+    const fmtWd = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Sao_Paulo', weekday: 'short' });
+    const counts = Object.fromEntries(ordem.map(d => [d, 0]));
+    scoped.forEach(t => { const pt = mapEn[fmtWd.format(new Date(t.created_at))]; if (pt) counts[pt]++; });
+    const arr = ordem.map(dia => ({ dia, n: counts[dia] }));
+    const max = Math.max(1, ...arr.map(x => x.n));
+    return { arr, max };
+  }, [scoped]);
+
+  // Exporta as demandas do escopo atual em CSV (Excel-friendly, ;)
+  const exportarCSV = () => {
+    const nome = (id) => setores.find(s => s.id == id)?.name || '';
+    const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const linhas = [['id', 'titulo', 'origem', 'destino', 'status', 'urgencia', 'tipo', 'responsavel', 'criado_em', 'entrega']];
+    scoped.forEach(t => linhas.push([t.id, esc(t.title), nome(t.origin_setor_id), nome(t.setor_id), t.status, t.urgency, t.ticket_type || '', esc(t.responsible), fmtDataHoraSP(t.created_at), t.delivery_date ? fmtDataPura(t.delivery_date) : '']));
+    const csv = linhas.map(l => l.join(';')).join('\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'relatorio-tickets.csv'; a.click();
+    URL.revokeObjectURL(url);
+  };
+
   if (loading) return (
     <div className="animate-in">
       <Skeleton w={200} h={26} r={8} style={{ marginBottom: '2rem' }} />
@@ -3149,21 +3817,29 @@ function AnalyticsDashboard({ tickets, setores = [] }) {
     <div className="animate-in">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem', flexWrap: 'wrap', gap: '1rem' }}>
         <h2 style={{ fontSize: '1.5rem', fontWeight: '700', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <BarChart3 color="var(--primary)" /> Analytics & BI
+          <BarChart3 color="var(--primary)" /> Relatórios
         </h2>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--surface)', padding: '6px 12px', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
-            <Layers size={16} style={{ color: 'var(--text-muted)' }} />
-            <select
-              value={selectedSetor}
-              onChange={e => { setSelectedSetor(e.target.value); setSelectedResp(''); }}
-              className="analytics-select"
-              style={{ border: 'none', margin: 0, padding: '4px', fontSize: '0.85rem', fontWeight: '600', width: 'auto', color: 'inherit', background: 'none', cursor: 'pointer' }}
-            >
-              <option value="">Todos os setores</option>
-              {setores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-          </div>
+          {/* Admin escolhe o setor; gerente/resp. já vem fixo no próprio setor (dropdown oculto) */}
+          {isAdmin ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--surface)', padding: '6px 12px', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
+              <Layers size={16} style={{ color: 'var(--text-muted)' }} />
+              <select
+                value={selectedSetor}
+                onChange={e => { setSelectedSetor(e.target.value); setSelectedResp(''); }}
+                className="analytics-select"
+                style={{ border: 'none', margin: 0, padding: '4px', fontSize: '0.85rem', fontWeight: '600', width: 'auto', color: 'inherit', background: 'none', cursor: 'pointer' }}
+              >
+                <option value="">Todos os setores</option>
+                {setores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+          ) : setorFixo && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--surface)', padding: '6px 12px', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
+              <Layers size={16} style={{ color: 'var(--text-muted)' }} />
+              <span style={{ fontSize: '0.85rem', fontWeight: 700 }}>{setores.find(s => String(s.id) === setorFixo)?.name || 'Meu setor'}</span>
+            </div>
+          )}
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--surface)', padding: '6px 12px', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
             <Users size={16} style={{ color: 'var(--text-muted)' }} />
             <select
@@ -3176,6 +3852,103 @@ function AnalyticsDashboard({ tickets, setores = [] }) {
               {responsibleList.map(r => <option key={r} value={r}>{r}</option>)}
             </select>
           </div>
+          {/* Filtro de período */}
+          <div style={{ display: 'flex', gap: '4px', background: 'var(--surface)', padding: '4px', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
+            {[{ v: 7, l: '7d' }, { v: 30, l: '30d' }, { v: 90, l: '90d' }, { v: 0, l: 'Tudo' }].map(o => (
+              <button key={o.v} onClick={() => setPeriodo(o.v)}
+                style={{ padding: '4px 10px', borderRadius: '8px', border: 'none', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 700, background: periodo === o.v ? 'var(--primary)' : 'transparent', color: periodo === o.v ? '#fff' : 'var(--text-muted)' }}>{o.l}</button>
+            ))}
+          </div>
+          <button onClick={exportarCSV} className="btn btn-ghost" style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.82rem', padding: '6px 12px' }} title="Exportar as demandas do escopo atual em CSV">
+            <RefreshCw size={14} /> Exportar CSV
+          </button>
+        </div>
+      </div>
+
+      {/* KPIs */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
+        {[
+          { label: 'Total de demandas', valor: kpis.total, cor: 'var(--primary)' },
+          { label: 'Abertas', valor: kpis.abertas, cor: '#3b82f6' },
+          { label: 'Resolvidas', valor: kpis.resolvidas, cor: '#10b981' },
+          { label: 'Aguardando aceite', valor: kpis.aguardando, cor: '#f59e0b' },
+          { label: 'Vencidas', valor: kpis.vencidas, cor: '#ef4444' },
+          { label: '% no prazo', valor: kpis.noPrazo == null ? '—' : `${kpis.noPrazo}%`, cor: '#8b5cf6' },
+        ].map((k, i) => (
+          <div key={i} className="glass" style={{ padding: '1.1rem 1.25rem', border: '1px solid var(--glass-border)' }}>
+            <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)', fontWeight: 700 }}>{k.label}</div>
+            <div style={{ fontSize: '1.8rem', fontWeight: 800, color: k.cor, marginTop: '4px' }}>{k.valor}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.5rem', marginBottom: '1.5rem' }}>
+        {/* Distribuição por status */}
+        <div className="glass" style={{ padding: '1.5rem' }}>
+          <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '0 0 1rem', fontSize: '1rem', fontWeight: 800 }}>
+            <LayoutDashboard size={16} color="var(--primary)" /> Distribuição por status
+          </h3>
+          {statusDist.length === 0 ? (
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>Sem demandas no período.</div>
+          ) : statusDist.map(s => (
+            <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+              <span style={{ fontSize: '0.8rem', fontWeight: 600, width: '90px', flexShrink: 0 }}>{s.name}</span>
+              <div style={{ flex: 1, height: '10px', borderRadius: '999px', background: 'rgba(0,0,0,0.06)', overflow: 'hidden' }}>
+                <div style={{ width: `${(s.count / s.max) * 100}%`, height: '100%', background: s.color, borderRadius: '999px' }} />
+              </div>
+              <span style={{ fontSize: '0.85rem', fontWeight: 800, width: '32px', textAlign: 'right' }}>{s.count}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Matriz origem → destino */}
+        <div className="glass" style={{ padding: '1.5rem' }}>
+          <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '0 0 1rem', fontSize: '1rem', fontWeight: 800 }}>
+            <Layers size={16} color="var(--primary)" /> Demandas entre setores (origem → destino)
+          </h3>
+          {matriz.length === 0 ? (
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>Sem demandas no período.</div>
+          ) : (
+            <div style={{ maxHeight: '260px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' }} className="hide-scrollbar">
+              {matriz.map(m => (
+                <div key={m.k} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', padding: '8px 12px', borderRadius: '10px', background: 'rgba(0,0,0,0.02)', border: '1px solid var(--glass-border)' }}>
+                  <span style={{ fontSize: '0.82rem', fontWeight: 600, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.k}</span>
+                  <span style={{ fontSize: '0.8rem', fontWeight: 800, background: 'var(--primary)', color: '#fff', padding: '2px 10px', borderRadius: '999px', flexShrink: 0 }}>{m.v}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Tempos médios + taxa de recusa */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
+        {[
+          { label: 'Tempo médio de aceite', valor: tempos.aceite, cor: '#3b82f6' },
+          { label: 'Tempo médio de resolução', valor: tempos.resolucao, cor: '#10b981' },
+          { label: 'Responsividade (1ª visualização)', valor: tempos.responsividade, cor: '#8b5cf6' },
+          { label: 'Taxa de recusa', valor: recusa == null ? '—' : `${recusa}%`, cor: '#ef4444' },
+        ].map((k, i) => (
+          <div key={i} className="glass" style={{ padding: '1.1rem 1.25rem', border: '1px solid var(--glass-border)' }}>
+            <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-muted)', fontWeight: 700 }}>{k.label}</div>
+            <div style={{ fontSize: '1.6rem', fontWeight: 800, color: k.cor, marginTop: '4px' }}>{k.valor}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Volume de demandas criadas por dia da semana */}
+      <div className="glass" style={{ padding: '1.5rem', marginBottom: '1.5rem' }}>
+        <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '0 0 1rem', fontSize: '1rem', fontWeight: 800 }}>
+          <BarChart3 size={16} color="var(--primary)" /> Volume de demandas por dia da semana
+        </h3>
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: '12px', height: '160px' }}>
+          {volume.arr.map(d => (
+            <div key={d.dia} title={`${d.dia}: ${d.n} demanda(s)`} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%', gap: '6px' }}>
+              <span style={{ fontSize: '0.9rem', fontWeight: 800, color: 'var(--text-main)' }}>{d.n}</span>
+              <div style={{ width: '100%', maxWidth: '48px', height: `${(d.n / volume.max) * 100}%`, minHeight: '4px', background: d.n === volume.max ? 'var(--primary)' : 'rgba(99,102,241,0.5)', borderRadius: '6px 6px 0 0', transition: 'height 0.3s' }} />
+              <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)' }}>{d.dia}</span>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -3208,6 +3981,8 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
   const [isNewUserModalOpen, setIsNewUserModalOpen] = useState(false);
   const [isEditUserModalOpen, setIsEditUserModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
+  const [novoSetorId, setNovoSetorId] = useState(''); // setor escolhido no modal Novo Membro (controla o dropdown de sub-setor)
+  const [editSetorId, setEditSetorId] = useState(''); // idem no modal Editar Membro
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -3220,12 +3995,18 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
     const data = Object.fromEntries(fd);
     data.setor_id = data.setor_id ? Number(data.setor_id) : null;
     data.system_id = data.system_id ? Number(data.system_id) : null;
+    const emailNorm = String(data.email || '').toLowerCase().trim();
+    const jaExiste = dbUsers.find(u => String(u.email || '').toLowerCase().trim() === emailNorm);
+    if (jaExiste) { toast.error(`Já existe uma conta com este e-mail (${jaExiste.name}).`); playSound('error'); return; }
     const { error } = await api.from('users').insert([{ ...data, avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${data.email}` }]);
-    if (!error) { 
-      toast.success('Membro criado!'); 
-      setIsNewUserModalOpen(false); 
-      parentFetchUsers(); 
-      playSound('success'); 
+    if (!error) {
+      toast.success('Membro criado!');
+      setIsNewUserModalOpen(false);
+      parentFetchUsers();
+      playSound('success');
+    } else {
+      toast.error(/duplicate/i.test(error.message || '') ? 'E-mail já cadastrado.' : (error.message || 'Não foi possível criar o membro.'));
+      playSound('error');
     }
   };
 
@@ -3261,7 +4042,7 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
           <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginTop: '4px' }}>Gerencie permissões e visualize o status dos membros.</p>
         </div>
         {user?.role === 'admin' && (
-          <button className="btn btn-primary" onClick={() => setIsNewUserModalOpen(true)}>
+          <button className="btn btn-primary" onClick={() => { setNovoSetorId(''); setIsNewUserModalOpen(true); }}>
             <Plus size={18} /> Adicionar Membro
           </button>
         )}
@@ -3331,7 +4112,7 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
                   {user?.role === 'admin' && (
                     <td style={{ padding: '1.25rem', textAlign: 'right' }}>
                       <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                        <button className="icon-btn" onClick={() => { setEditingUser(u); setIsEditUserModalOpen(true); playSound('click'); }} title="Editar Dados">
+                        <button className="icon-btn" onClick={() => { setEditingUser(u); setEditSetorId(u.setor_id ?? ''); setIsEditUserModalOpen(true); playSound('click'); }} title="Editar Dados">
                           <Pencil size={16} />
                         </button>
                         <button className="icon-btn logout" onClick={() => handleDeleteUserInternal(u.id, u.name)} title="Excluir Usuário">
@@ -3357,14 +4138,20 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
               <select name="role" defaultValue="funcionario">
                 {ROLES.map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
               </select>
-              <select name="setor_id" defaultValue="">
+              <select name="setor_id" value={novoSetorId} onChange={e => setNovoSetorId(e.target.value)}>
                 <option value="">Setor (nenhum)</option>
                 {setores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
-              <select name="system_id" defaultValue="">
-                <option value="">Sub-setor (nenhum)</option>
-                {systems.map(s => <option key={s.id} value={s.id}>{s.name}{setorNome(s.setor_id) ? ` (${setorNome(s.setor_id)})` : ''}</option>)}
-              </select>
+              {/* Sub-setor só aparece se o setor escolhido tiver sub-setores */}
+              {(() => {
+                const subs = systems.filter(s => String(s.setor_id) === String(novoSetorId));
+                return novoSetorId && subs.length > 0 ? (
+                  <select name="system_id" defaultValue="">
+                    <option value="">Sub-setor (nenhum)</option>
+                    {subs.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                ) : null;
+              })()}
               <button type="submit" className="btn btn-primary" style={{ marginTop: '1rem' }}>Cadastrar</button>
             </form>
           </motion.div>
@@ -3390,15 +4177,25 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
                 {ROLES.map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
               </select>
               <label style={{ fontSize: '0.75rem' }}>Setor</label>
-              <select name="setor_id" defaultValue={editingUser?.setor_id ?? ''}>
+              <select name="setor_id" value={editSetorId} onChange={e => setEditSetorId(e.target.value)}>
                 <option value="">Setor (nenhum)</option>
                 {setores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
-              <label style={{ fontSize: '0.75rem' }}>Sub-setor <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(funcionário/colaborador de um sub-setor)</span></label>
-              <select name="system_id" defaultValue={editingUser?.system_id ?? ''}>
-                <option value="">Sub-setor (nenhum)</option>
-                {systems.map(s => <option key={s.id} value={s.id}>{s.name}{setorNome(s.setor_id) ? ` (${setorNome(s.setor_id)})` : ''}</option>)}
-              </select>
+              {/* Sub-setor só aparece se o setor selecionado tiver sub-setores */}
+              {(() => {
+                const subs = systems.filter(s => String(s.setor_id) === String(editSetorId));
+                if (!editSetorId || subs.length === 0) return null;
+                const defSub = subs.some(s => String(s.id) === String(editingUser?.system_id)) ? editingUser.system_id : '';
+                return (
+                  <>
+                    <label style={{ fontSize: '0.75rem' }}>Sub-setor <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(funcionário/colaborador de um sub-setor)</span></label>
+                    <select name="system_id" key={editSetorId} defaultValue={defSub}>
+                      <option value="">Sub-setor (nenhum)</option>
+                      {subs.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  </>
+                );
+              })()}
               <button type="submit" className="btn btn-primary" style={{ marginTop: '1rem' }}>Salvar Alterações</button>
             </form>
           </motion.div>
@@ -3414,7 +4211,7 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
   const [editingEntity, setEditingEntity] = useState(null);
   const [editingTable, setEditingTable] = useState('setores'); // 'setores' | 'systems'
   const [newParentSetorId, setNewParentSetorId] = useState(null); // setor onde o novo sistema entra
-  const [selectedResps, setSelectedResps] = useState([]); // ids de usuários responsáveis
+  const [teamAssign, setTeamAssign] = useState({}); // { userId: 'gerente' | 'funcionario' } — equipe do setor/sub-setor
   const [linkModal, setLinkModal] = useState(null); // { tipo, target } p/ o link de registro
 
   const isAdmin = user?.role === 'admin';
@@ -3422,19 +4219,71 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
   const fem = entityLabel.endsWith('a'); // concordância de gênero (Setor/Sub-Setor = masculino)
   const nomeUsuario = (id) => allUsers.find(u => u.id === id)?.name || `#${id}`;
 
+  // Quem CONFIGURA (auto_pool): admin, o gerente do setor, ou o responsável do sub-setor
+  const meusSetorIds = leadSetorIds(user, setores);
+  const meusSystemIds = leadSystemIds(user, systems);
+  const podeConfigSetor = (s) => isAdmin || meusSetorIds.includes(s.id);
+  const podeConfigSub = (sys) => isAdmin || meusSystemIds.includes(sys.id);
+
+  // Não-admin vê só os setores que lidera OU que contêm um sub-setor que ele lidera
+  const setoresVisiveis = isAdmin ? setores : setores.filter(s =>
+    meusSetorIds.includes(s.id) || systems.some(sy => sy.setor_id === s.id && meusSystemIds.includes(sy.id))
+  );
+
+  // Liga/desliga "time pega a demanda" (auto_pool) de um setor/sub-setor
+  const toggleAutoPool = async (table, entity) => {
+    try {
+      const { error } = await api.from(table).update({ auto_pool: entity.auto_pool ? 0 : 1 }).eq('id', entity.id);
+      if (error) throw error;
+      toast.success(entity.auto_pool ? 'Auto: desligado.' : 'Auto: time pega a demanda ligado.');
+      onUpdate();
+    } catch (e) { toast.error('Erro ao salvar a configuração.'); }
+  };
+
+  // Botão/indicador do auto_pool. canEdit → clicável (gerente/resp/admin); senão → só mostra quando ligado.
+  const AutoPoolBtn = ({ table, entity, canEdit }) => {
+    const on = !!entity.auto_pool;
+    if (!canEdit && !on) return null;
+    const style = { display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '4px 10px', borderRadius: '999px', fontSize: '0.7rem', fontWeight: 700, border: `1px solid ${on ? '#10b981' : 'var(--glass-border)'}`, background: on ? 'rgba(16,185,129,0.12)' : 'transparent', color: on ? '#10b981' : 'var(--text-muted)', cursor: canEdit ? 'pointer' : 'default' };
+    const label = <><Users size={12} /> Time pega a demanda: {on ? 'ON' : 'OFF'}</>;
+    return canEdit
+      ? <button type="button" onClick={() => toggleAutoPool(table, entity)} title="Toda demanda que chega já fica disponível pro time pegar (notifica os funcionários)" style={style}>{label}</button>
+      : <span style={style}>{label}</span>;
+  };
+
+  // usuário pertence a esta entidade? (setor: setor_id direto sem sub-setor / sub-setor: system_id)
+  const pertence = (u, table, entity) => table === 'setores'
+    ? (String(u.setor_id) === String(entity?.id) && u.system_id == null)
+    : (String(u.system_id) === String(entity?.id));
+
   const openModal = (type, table, entity = null, parentSetorId = null) => {
     setEditingTable(table);
     setEditingEntity(entity);
     setNewParentSetorId(parentSetorId);
-    if (type === 'manage_resps') setSelectedResps(entity?.primary_responsibles || []);
+    if (type === 'manage_resps') {
+      const gerRole = table === 'setores' ? 'gerente' : 'responsavel_subsetor';
+      const init = {};
+      allUsers.forEach(u => {
+        if (pertence(u, table, entity)) init[u.id] = u.role === gerRole ? 'gerente' : 'funcionario';
+      });
+      setTeamAssign(init);
+    }
     setActiveModal(type);
   };
 
   const closeModal = () => {
     setActiveModal(null);
     setEditingEntity(null);
-    setSelectedResps([]);
+    setTeamAssign({});
     setNewParentSetorId(null);
+  };
+
+  const setAssign = (userId, papel) => {
+    setTeamAssign(prev => {
+      const next = { ...prev };
+      if (!papel) delete next[userId]; else next[userId] = papel;
+      return next;
+    });
   };
 
   const handleSaveName = async (e) => {
@@ -3460,13 +4309,27 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
     }
   };
 
-  const handleSaveResps = async () => {
+  // Salva a equipe: grava CARGO + LOTAÇÃO de cada usuário conforme escolhido no modal.
+  const handleSaveTeam = async () => {
     if (!editingEntity?.id) { toast.error('Registro não identificado.'); return; }
+    const table = editingTable, entity = editingEntity;
+    const gerRole = table === 'setores' ? 'gerente' : 'responsavel_subsetor';
+    const parentSetor = table === 'systems' ? entity.setor_id : entity.id;
     try {
-      const payload = { id: editingEntity.id, name: editingEntity.name, primary_responsibles: selectedResps };
-      if (editingTable === 'systems') payload.setor_id = editingEntity.setor_id; // preserva o vínculo com o setor
-      const { error } = await api.from(editingTable).upsert(payload).select();
-      if (error) throw error;
+      for (const u of allUsers) {
+        const alvo = teamAssign[u.id]; // 'gerente' | 'funcionario' | undefined
+        const estava = pertence(u, table, entity);
+        if (alvo) {
+          const role = alvo === 'gerente' ? gerRole : 'funcionario';
+          const setor_id = parentSetor;
+          const system_id = table === 'setores' ? null : entity.id;
+          const mudou = u.role !== role || String(u.setor_id ?? '') !== String(setor_id ?? '') || String(u.system_id ?? '') !== String(system_id ?? '');
+          if (mudou) await api.from('users').update({ role, setor_id, system_id }).eq('id', u.id);
+        } else if (estava) {
+          // removido desta equipe → tira a lotação (mantém o cargo global)
+          await api.from('users').update({ setor_id: null, system_id: null }).eq('id', u.id);
+        }
+      }
       toast.success('Equipe salva!');
       closeModal();
       onUpdate();
@@ -3487,9 +4350,6 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
     }
   };
 
-  const toggleResp = (id) => {
-    setSelectedResps(prev => prev.includes(id) ? prev.filter(n => n !== id) : [...prev, id]);
-  };
 
   const RespChips = ({ list }) => (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
@@ -3498,6 +4358,16 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
       )) : <span style={{ fontStyle: 'italic', fontSize: '0.8rem', color: 'var(--text-muted)' }}>Nenhum responsável</span>}
     </div>
   );
+
+  // Chip de membro com o cargo (cor por cargo) — usado no setor e sub-setor
+  const ChipMembro = ({ m }) => {
+    const c = ROLE_COLORS[m.role] || ROLE_COLORS.funcionario;
+    return (
+      <span title={ROLE_LABELS[m.role]} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '3px 10px', borderRadius: '999px', fontSize: '0.72rem', fontWeight: 700, background: c.bg, color: c.fg, border: `1px solid ${c.fg}22` }}>
+        {m.name} · {ROLE_LABELS[m.role]}
+      </span>
+    );
+  };
 
   return (
     <div className="animate-in">
@@ -3516,41 +4386,79 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-        {setores.map(setor => {
+        {setoresVisiveis.map(setor => {
           const sistemasDoSetor = systems.filter(sys => sys.setor_id == setor.id);
+          // Membros do setor (vinculados ao setor OU a um sub-setor dele), separados por cargo
+          const subIds = new Set(sistemasDoSetor.map(s => String(s.id)));
+          const membros = allUsers.filter(u => String(u.setor_id) === String(setor.id) || (u.system_id != null && subIds.has(String(u.system_id))));
+          const gerentesSetor = membros.filter(u => u.role === 'gerente');
+          const funcsSetor = membros.filter(u => u.role === 'funcionario');
           return (
             <motion.div layout key={setor.id} className="glass" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-              {/* Cabeçalho do setor */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              {/* Cabeçalho do setor: nome + GERENTE(s) à direita */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                   <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: 'rgba(99, 102, 241, 0.1)', color: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <Layers size={20} />
                   </div>
                   <h3 style={{ fontWeight: '800', fontSize: '1.2rem' }}>{setor.name}</h3>
                 </div>
-                {isAdmin && (
-                  <div style={{ display: 'flex', gap: '4px' }}>
-                    <button onClick={() => openModal('new_system', 'systems', null, setor.id)} className="icon-btn" title="Adicionar Sub-Setor"><Plus size={14} /></button>
-                    <button onClick={() => setLinkModal({ tipo: 'setor', target: setor })} className="icon-btn" title="Link de registro"><Link2 size={14} /></button>
-                    <button onClick={() => openModal('edit_name', 'setores', setor)} className="icon-btn" title="Editar Nome"><Pencil size={14} /></button>
-                    <button onClick={() => openModal('manage_resps', 'setores', setor)} className="icon-btn" title="Equipe do Setor"><UserPlus size={14} /></button>
-                    <button onClick={() => openModal('delete_confirm', 'setores', setor)} className="icon-btn logout" title="Excluir Setor"><Trash2 size={14} /></button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', justifyContent: 'flex-end' }}>
+                    {gerentesSetor.length > 0
+                      ? gerentesSetor.map(m => <ChipMembro key={m.id} m={m} />)
+                      : <span style={{ fontStyle: 'italic', fontSize: '0.8rem', color: 'var(--text-muted)' }}>Sem gerente no setor</span>}
                   </div>
-                )}
+                  {isAdmin && (
+                    <div style={{ display: 'flex', gap: '4px' }}>
+                      <button onClick={() => openModal('new_system', 'systems', null, setor.id)} className="icon-btn" title="Adicionar Sub-Setor"><Plus size={14} /></button>
+                      <button onClick={() => setLinkModal({ tipo: 'setor', target: setor })} className="icon-btn" title="Link de registro"><Link2 size={14} /></button>
+                      <button onClick={() => openModal('edit_name', 'setores', setor)} className="icon-btn" title="Editar Nome"><Pencil size={14} /></button>
+                      <button onClick={() => openModal('manage_resps', 'setores', setor)} className="icon-btn" title="Equipe do Setor"><UserPlus size={14} /></button>
+                      <button onClick={() => openModal('delete_confirm', 'setores', setor)} className="icon-btn logout" title="Excluir Setor"><Trash2 size={14} /></button>
+                    </div>
+                  )}
+                </div>
               </div>
 
-              {/* Corpo: sistemas do setor OU equipe do setor (quando não ramifica) */}
-              {sistemasDoSetor.length > 0 ? (
+              {/* Config do setor: time pega a demanda (auto_pool) */}
+              {(podeConfigSetor(setor) || setor.auto_pool) && (
+                <div><AutoPoolBtn table="setores" entity={setor} canEdit={podeConfigSetor(setor)} /></div>
+              )}
+
+              {/* Funcionários do setor */}
+              <div>
+                <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', fontWeight: '700', marginBottom: '8px' }}>Funcionários do setor</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                  {funcsSetor.length > 0
+                    ? funcsSetor.map(m => <ChipMembro key={m.id} m={m} />)
+                    : <span style={{ fontStyle: 'italic', fontSize: '0.8rem', color: 'var(--text-muted)' }}>Nenhum funcionário no setor</span>}
+                </div>
+              </div>
+
+              {/* Sub-setores do setor (cada um com seus responsáveis ao lado do nome) */}
+              {sistemasDoSetor.length > 0 && (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>
-                  {sistemasDoSetor.map(sys => (
+                  {sistemasDoSetor.map(sys => {
+                    // Responsáveis do sub-setor = resp. sub-setor lotado nele (cargo+system_id) + primary_responsibles
+                    const idsResp = new Set(Array.isArray(sys.primary_responsibles) ? sys.primary_responsibles : []);
+                    allUsers.forEach(u => { if (String(u.system_id) === String(sys.id) && u.role === 'responsavel_subsetor') idsResp.add(u.id); });
+                    const respsSub = [...idsResp].map(id => allUsers.find(u => u.id === id)).filter(Boolean);
+                    return (
                     <div key={sys.id} style={{ padding: '1rem', borderRadius: '12px', border: '1px solid var(--glass-border)', background: 'rgba(0,0,0,0.02)', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                           <Code2 size={16} color="var(--primary)" />
                           <span style={{ fontWeight: '700' }}>{sys.name}</span>
+                          {/* Responsável(is) do sub-setor ao lado do nome */}
+                          {respsSub.length > 0
+                            ? respsSub.map(m => <ChipMembro key={m.id} m={m} />)
+                            : (gerentesSetor.length > 0
+                                ? <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>via gerente do setor</span>
+                                : <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>Sem responsável</span>)}
                         </div>
                         {isAdmin && (
-                          <div style={{ display: 'flex', gap: '2px' }}>
+                          <div style={{ display: 'flex', gap: '2px', flexShrink: 0 }}>
                             <button onClick={() => setLinkModal({ tipo: 'categoria', target: sys })} className="icon-btn" title="Link de registro"><Link2 size={12} /></button>
                             <button onClick={() => openModal('edit_name', 'systems', sys)} className="icon-btn" title="Editar Nome"><Pencil size={12} /></button>
                             <button onClick={() => openModal('manage_resps', 'systems', sys)} className="icon-btn" title="Responsáveis"><UserPlus size={12} /></button>
@@ -3558,20 +4466,19 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
                           </div>
                         )}
                       </div>
-                      <RespChips list={sys.primary_responsibles} />
+                      {/* Config do sub-setor: time pega a demanda */}
+                      {(podeConfigSub(sys) || sys.auto_pool) && (
+                        <AutoPoolBtn table="systems" entity={sys} canEdit={podeConfigSub(sys)} />
+                      )}
                     </div>
-                  ))}
-                </div>
-              ) : (
-                <div>
-                  <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', fontWeight: '700', marginBottom: '8px' }}>Equipe do setor (setor sem sistemas)</div>
-                  <RespChips list={setor.primary_responsibles} />
+                    );
+                  })}
                 </div>
               )}
             </motion.div>
           );
         })}
-        {setores.length === 0 && (
+        {setoresVisiveis.length === 0 && (
           <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '2rem' }}>Nenhum setor cadastrado.</div>
         )}
       </div>
@@ -3581,14 +4488,15 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
           <SystemActionModal
             type={activeModal}
             entityLabel={entityLabel}
+            table={editingTable}
             system={editingEntity}
             users={allUsers}
-            selectedResps={selectedResps}
+            teamAssign={teamAssign}
+            onSetAssign={setAssign}
             onClose={closeModal}
             onSaveName={handleSaveName}
-            onSaveResps={handleSaveResps}
+            onSaveTeam={handleSaveTeam}
             onConfirmDelete={handleConfirmDelete}
-            onToggleResp={toggleResp}
           />
         )}
       </AnimatePresence>
@@ -3603,13 +4511,14 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
 }
 
 // --- Sub-componente para Modais de Sistemas (Estabilidade de Portal/Animação) ---
-function SystemActionModal({ type, entityLabel = 'Sistema', system, users, selectedResps, onClose, onSaveName, onSaveResps, onConfirmDelete, onToggleResp }) {
+function SystemActionModal({ type, entityLabel = 'Sistema', table = 'setores', system, users, teamAssign = {}, onSetAssign, onClose, onSaveName, onSaveTeam, onConfirmDelete }) {
   const [mounted, setMounted] = useState(false);
   const [busca, setBusca] = useState('');
   useEffect(() => setMounted(true), []);
 
   const fem = entityLabel.endsWith('a'); // concordância de gênero (ex: Categoria)
-  const usuariosFiltrados = users.filter(u => (u.name || '').toLowerCase().includes(busca.toLowerCase()));
+  const usuariosFiltrados = users.filter(u => u.role !== 'admin' && (u.name || '').toLowerCase().includes(busca.toLowerCase())); // admin não entra em equipe (vê tudo)
+  const gerLabel = table === 'setores' ? 'Gerente' : 'Responsável'; // no sub-setor o "gerente" é o responsável
 
   if (!mounted) return null;
 
@@ -3625,7 +4534,7 @@ function SystemActionModal({ type, entityLabel = 'Sistema', system, users, selec
           <h2>
             {type === 'edit_name' && 'Editar Nome'}
             {type === 'new_system' && `${fem ? 'Nova' : 'Novo'} ${entityLabel}`}
-            {type === 'manage_resps' && 'Gerenciar Responsáveis'}
+            {type === 'manage_resps' && `Gerenciar Equipe · ${entityLabel}`}
             {type === 'delete_confirm' && 'Confirmar Exclusão'}
           </h2>
           <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-main)', cursor: 'pointer' }}>
@@ -3645,7 +4554,9 @@ function SystemActionModal({ type, entityLabel = 'Sistema', system, users, selec
 
         {type === 'manage_resps' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-            <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', margin: 0 }}>Responsáveis para <strong>{system?.name}</strong>:</p>
+            <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', margin: 0 }}>
+              Equipe de <strong>{system?.name}</strong> — defina <strong>{gerLabel.toLowerCase()}(s)</strong> e <strong>funcionários</strong>. O papel escolhido grava o cargo e a lotação da pessoa.
+            </p>
             <div style={{ position: 'relative' }}>
               <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
               <input
@@ -3657,33 +4568,33 @@ function SystemActionModal({ type, entityLabel = 'Sistema', system, users, selec
                 autoFocus
               />
             </div>
-            <div style={{ maxHeight: '300px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div style={{ maxHeight: '340px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {usuariosFiltrados.length === 0 && (
                 <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontStyle: 'italic', textAlign: 'center', padding: '1rem 0' }}>Nenhum usuário encontrado.</p>
               )}
-              {usuariosFiltrados.map(u => (
-                <div
-                  key={u.id}
-                  onClick={() => onToggleResp(u.id)}
-                  style={{
-                    padding: '12px 16px', borderRadius: '10px', border: '1px solid var(--glass-border)',
-                    background: selectedResps.includes(u.id) ? 'rgba(99, 102, 241, 0.1)' : 'transparent',
-                    cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between'
-                  }}
-                >
-                  <span style={{ fontWeight: '500' }}>{u.name}</span>
-                  <div style={{
-                    width: '20px', height: '20px', borderRadius: '4px',
-                    border: `2px solid ${selectedResps.includes(u.id) ? 'var(--primary)' : 'var(--glass-border)'}`,
-                    background: selectedResps.includes(u.id) ? 'var(--primary)' : 'transparent',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center'
-                  }}>
-                    {selectedResps.includes(u.id) && <CheckSquare size={14} color="white" />}
+              {usuariosFiltrados.map(u => {
+                const papel = teamAssign[u.id]; // 'gerente' | 'funcionario' | undefined
+                const Opt = ({ val, label, cor }) => (
+                  <button type="button" onClick={() => onSetAssign(u.id, papel === val ? null : val)}
+                    style={{
+                      padding: '5px 10px', borderRadius: '8px', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer',
+                      border: `1px solid ${papel === val ? cor : 'var(--glass-border)'}`,
+                      background: papel === val ? cor : 'transparent',
+                      color: papel === val ? '#fff' : 'var(--text-muted)'
+                    }}>{label}</button>
+                );
+                return (
+                  <div key={u.id} style={{ padding: '10px 14px', borderRadius: '10px', border: '1px solid var(--glass-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', background: papel ? 'rgba(99,102,241,0.05)' : 'transparent' }}>
+                    <span style={{ fontWeight: '500', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{u.name}</span>
+                    <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+                      <Opt val="gerente" label={gerLabel} cor="#ec4899" />
+                      <Opt val="funcionario" label="Funcionário" cor="#64748b" />
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
-            <button onClick={onSaveResps} className="btn btn-primary" style={{ width: '100%' }}>Salvar Equipe</button>
+            <button onClick={onSaveTeam} className="btn btn-primary" style={{ width: '100%' }}>Salvar Equipe</button>
           </div>
         )}
 
@@ -3717,6 +4628,21 @@ function ConfigView() {
   const [testeEmail, setTesteEmail] = useState('');
   const [testando, setTestando] = useState(false);
   const [notif, setNotif] = useState({ ticket_criado: true, ticket_alterado: true, nova_mensagem: true });
+  const [limpando, setLimpando] = useState(false);
+  const [confirmarLimpeza, setConfirmarLimpeza] = useState(false);
+
+  const limparBanco = async () => {
+    if (!confirmarLimpeza) { setConfirmarLimpeza(true); setTimeout(() => setConfirmarLimpeza(false), 5000); return; }
+    setConfirmarLimpeza(false);
+    setLimpando(true);
+    try {
+      const token = localStorage.getItem('sessionToken');
+      const r = await (await fetch('/api/limpar-banco', { method: 'POST', headers: { 'x-session-token': token || '' } })).json();
+      if (r.ok) { toast.success(`Banco limpo — só os admins ficaram. ${r.usuariosRemovidos} usuário(s) removido(s).`); playSound('success'); setTimeout(() => window.location.reload(), 1500); }
+      else toast.error('Erro ao limpar: ' + (r.error || ''));
+    } catch { toast.error('Falha ao limpar o banco.'); }
+    finally { setLimpando(false); }
+  };
 
   const carregar = async () => {
     try { const r = await (await fetch('/api/config')).json(); setStatus(r); setFrom(r.emailFrom || ''); if (r.notif) setNotif(r.notif); } catch {}
@@ -3746,7 +4672,7 @@ function ConfigView() {
   };
 
   return (
-    <div className="animate-in" style={{ maxWidth: '640px' }}>
+    <div className="animate-in">
       <div style={{ marginBottom: '2rem' }}>
         <h2 style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '1.75rem', fontWeight: '800' }}>
           <Settings color="var(--primary)" size={28} /> Configurações
@@ -3754,6 +4680,7 @@ function ConfigView() {
         <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginTop: '4px' }}>Credenciais de integração do sistema.</p>
       </div>
 
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: '1.5rem', alignItems: 'start' }}>
       <div className="glass" style={{ padding: '1.75rem', border: '1px solid var(--glass-border)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
           <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800 }}>Notificações por e-mail (Resend)</h3>
@@ -3805,7 +4732,7 @@ function ConfigView() {
       </div>
 
       {/* Manual de configuração do Resend */}
-      <div className="glass" style={{ padding: '1.75rem', border: '1px solid var(--glass-border)', marginTop: '1.5rem' }}>
+      <div className="glass" style={{ padding: '1.75rem', border: '1px solid var(--glass-border)' }}>
         <h3 style={{ margin: '0 0 4px', fontSize: '1.1rem', fontWeight: 800 }}>Como configurar o e-mail (Resend)</h3>
         <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', margin: '0 0 1.25rem' }}>Passo a passo para o sistema enviar e-mails aos responsáveis dos setores.</p>
         <ol style={{ margin: 0, paddingLeft: '1.2rem', display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '0.88rem', lineHeight: 1.6, color: 'var(--text-main)' }}>
@@ -3819,6 +4746,21 @@ function ConfigView() {
         <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '1.25rem', paddingTop: '1rem', borderTop: '1px solid var(--glass-border)' }}>
           A chave fica guardada apenas no servidor (banco), nunca é exibida de volta nem enviada ao navegador. Para trocar depois, basta colar uma nova aqui.
         </p>
+      </div>
+
+      {/* Zona de perigo — limpar banco */}
+      <div className="glass" style={{ padding: '1.75rem', border: '1px solid rgba(239,68,68,0.4)', background: 'rgba(239,68,68,0.03)' }}>
+        <h3 style={{ margin: '0 0 4px', fontSize: '1.1rem', fontWeight: 800, color: '#ef4444', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <AlertTriangle size={18} /> Zona de perigo
+        </h3>
+        <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', margin: '0 0 1.25rem', lineHeight: 1.5 }}>
+          Limpar o banco apaga <b>todos os tickets, mensagens, setores, sub-setores e usuários</b> — mantém <b>apenas os usuários admin</b>. Ação <b>irreversível</b>.
+        </p>
+        <button onClick={limparBanco} disabled={limpando}
+          className="btn" style={{ background: confirmarLimpeza ? '#b91c1c' : '#ef4444', color: '#fff', border: 'none', display: 'flex', alignItems: 'center', gap: '8px', opacity: limpando ? 0.6 : 1 }}>
+          <Trash2 size={16} /> {limpando ? 'Limpando…' : confirmarLimpeza ? 'Clique de novo para CONFIRMAR' : 'Limpar banco de dados'}
+        </button>
+      </div>
       </div>
     </div>
   );
@@ -3967,8 +4909,8 @@ function LogsView() {
                       </div>
                     </td>
                     <td style={{ padding: '1.25rem', textAlign: 'right' }}>
-                      <div style={{ fontSize: '0.85rem', fontWeight: '600' }}>{new Date(log.created_at).toLocaleDateString('pt-BR')}</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>{new Date(log.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</div>
+                      <div style={{ fontSize: '0.85rem', fontWeight: '600' }}>{fmtDataSP(log.created_at)}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>{fmtHoraSP(log.created_at, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</div>
                     </td>
                   </tr>
                 );

@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS setores (
     name VARCHAR(255) NOT NULL UNIQUE,
     primary_responsibles JSON NULL, -- array de IDs de users (responsáveis/gerentes do setor; definem o escopo de visualização)
     colunas JSON NULL, -- colunas de Kanban personalizadas do setor: [{id,name,color}]
+    auto_pool TINYINT DEFAULT 0, -- 1 = toda demanda que chega já nasce aberta ao time (open_pool) + notifica os funcionários (config do gerente)
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -35,6 +36,7 @@ CREATE TABLE IF NOT EXISTS systems (
     name VARCHAR(255) NOT NULL UNIQUE,
     primary_responsibles JSON NULL, -- array de IDs de users (responsáveis do sub-setor)
     colunas JSON NULL, -- colunas de Kanban personalizadas do sub-setor: [{id,name,color}]
+    auto_pool TINYINT DEFAULT 0, -- 1 = toda demanda do sub-setor já nasce aberta ao time + notifica (config do responsável)
     setor_id INT NULL, -- setor pai (todo sub-setor pertence a um setor; populado pela migração)
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     KEY idx_systems_setor (setor_id),
@@ -58,6 +60,9 @@ CREATE TABLE IF NOT EXISTS tickets (
     attachments JSON NULL,
     dev_notes TEXT NULL,
     shared_with JSON NULL,
+    open_pool TINYINT DEFAULT 0, -- 1 = demanda aberta ao setor: colaboradores do setor veem e podem puxar (aceitar)
+    responsible_seen_at DATETIME NULL, -- última vez que o RESPONSÁVEL abriu/visualizou a demanda (read receipt p/ o criador)
+    finalized TINYINT DEFAULT 0, -- 1 = o CRIADOR confirmou que foi resolvido de fato → demanda finalizada (fica opaca em "Resolvido")
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     KEY idx_tickets_setor (setor_id),
@@ -87,6 +92,7 @@ CREATE TABLE IF NOT EXISTS ticket_messages (
     ticket_id INT NOT NULL,
     user_id INT NOT NULL,
     message TEXT NOT NULL,
+    attachments JSON NULL, -- imagens/vídeos da mensagem: [{url(base64),type,name}] (mesmo formato do ticket)
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE

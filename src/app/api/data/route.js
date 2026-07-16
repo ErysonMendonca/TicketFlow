@@ -20,8 +20,24 @@ export async function POST(request) {
 
     // --- AUTORIZAÇÃO POR CARGO (o que seu cargo não alcança é bloqueado no servidor) ---
     const semPermissao = () => NextResponse.json({ error: 'Sem permissão para esta ação.' }, { status: 403 });
-    // Escrever em setores/systems: só admin
-    if (['setores', 'systems'].includes(table) && action !== 'select' && !admin) return semPermissao();
+    // Escrever em setores/systems: só admin — EXCEÇÃO: quem lidera pode editar campos de configuração
+    // (`colunas` do Kanban e `auto_pool`) do setor/sub-setor que lidera.
+    if (['setores', 'systems'].includes(table) && action !== 'select' && !admin) {
+      const alvoId = filters.find(f => f.type === 'eq' && f.col === 'id')?.val;
+      const campos = data ? Object.keys(data) : [];
+      const permitidos = ['colunas', 'auto_pool'];
+      const soPermitidos = action === 'update' && campos.length > 0 && campos.every(c => permitidos.includes(c));
+      if (!soPermitidos || alvoId == null) return semPermissao();
+      // Dono: está no primary_responsibles OU é o gerente/resp. lotado nele (cargo + setor_id/system_id).
+      const [donoRows] = await pool.query(`SELECT primary_responsibles FROM ${table} WHERE id = ? LIMIT 1`, [alvoId]);
+      let resp = donoRows[0]?.primary_responsibles;
+      if (typeof resp === 'string') { try { resp = JSON.parse(resp); } catch { resp = []; } }
+      const noPrimary = Array.isArray(resp) && resp.includes(usuario.id);
+      const porCargo = table === 'setores'
+        ? (usuario.role === 'gerente' && String(usuario.setor_id) === String(alvoId))
+        : (usuario.role === 'responsavel_subsetor' && String(usuario.system_id) === String(alvoId));
+      if (!noPrimary && !porCargo) return semPermissao();
+    }
     // Escrever em users: só admin — exceto a PRÓPRIA linha (is_online / perfil)
     if (table === 'users' && action !== 'select' && !admin) {
       const alvo = filters.find(f => f.type === 'eq' && f.col === 'id')?.val;

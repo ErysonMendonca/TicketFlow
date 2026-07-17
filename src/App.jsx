@@ -2029,7 +2029,7 @@ function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, onTi
                 </div>
 
                 <div style={{ textAlign: 'right', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  {ticket.finalized && (
+                  {!!ticket.finalized && (
                     <span style={{ background: 'rgba(16,185,129,0.15)', color: '#10b981', padding: '3px 8px', borderRadius: '6px', fontSize: '0.65rem', fontWeight: 800, textTransform: 'uppercase' }}>
                       ✓ Finalizado
                     </span>
@@ -2371,7 +2371,7 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', marginBottom: '4px', alignItems: 'center', flexWrap: 'nowrap', height: '20px' }}>
                           <span style={{ color: 'var(--primary)', fontWeight: '700', flexShrink: 0 }}>#{ticket.id}</span>
                           <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexShrink: 0, whiteSpace: 'nowrap' }}>
-                            {ticket.finalized && (
+                            {!!ticket.finalized && (
                               <span style={{ background: 'rgba(16,185,129,0.15)', color: '#10b981', padding: '2px 6px', borderRadius: '4px', fontSize: '0.6rem', fontWeight: '800', textTransform: 'uppercase' }}>
                                 ✓ Finalizado
                               </span>

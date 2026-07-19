@@ -2965,8 +2965,8 @@ function AnaliseGateModal({ ticket, onConfirm, onViewDetails, onClose }) {
 
 // --- Modal de Criação ---
 function TicketModal({ onClose, onSubmit, systems, setores = [], user, allUsers = [] }) {
-  // Destino só pode ser OUTRO setor: exclui o setor de origem (o de quem abre)
-  const setoresDestino = setores.filter(s => s.id != user?.setor_id);
+  // Destino pode ser qualquer setor, inclusive o próprio setor de quem abre.
+  const setoresDestino = setores;
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 

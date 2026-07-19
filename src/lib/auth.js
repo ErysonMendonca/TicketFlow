@@ -37,7 +37,7 @@ export async function usuarioDaSessao(request) {
   if (!token) return null;
   try {
     const [rows] = await pool.query(
-      'SELECT u.id, u.name, u.role, u.setor_id, u.system_id FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ? LIMIT 1',
+      'SELECT u.id, u.name, u.role, u.setor_id, u.system_id, u.blocked FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ? LIMIT 1',
       [token]);
     return rows[0] || null;
   } catch { return null; }

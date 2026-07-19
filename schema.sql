@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS users (
     system_id INT NULL, -- sub-setor (system) PRINCIPAL do funcionário/colaborador (um nível abaixo do setor)
     system_ids JSON NULL, -- sub-setores EXTRAS onde o funcionário também trabalha (além do principal); visibilidade = system_id ∪ system_ids
     responsavel_id INT NULL, -- quem é o RESPONSÁVEL deste usuário (gerente/resp. que criou o link de cadastro)
+    blocked TINYINT DEFAULT 0, -- 1 = acesso bloqueado pelo responsável (não loga e a sessão ativa é recusada)
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     KEY idx_users_setor (setor_id),
     KEY idx_users_system (system_id),

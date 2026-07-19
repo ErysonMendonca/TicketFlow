@@ -4141,6 +4141,7 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
                       <span style={{ color: u.is_online ? '#10b981' : 'var(--text-muted)', fontWeight: '600' }}>
                         {u.is_online ? 'Disponível' : 'Ausente'}
                       </span>
+                      {u.blocked ? <span style={{ padding: '2px 8px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 800, textTransform: 'uppercase', background: 'rgba(239,68,68,0.15)', color: '#ef4444' }}>Bloqueado</span> : null}
                     </div>
                   </td>
                   {user?.role === 'admin' && (
@@ -4407,6 +4408,14 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
       onUpdate();
     } catch (e) { toast.error('Erro ao atualizar sub-setores: ' + (e.message || '')); }
   };
+  const toggleBloqueio = async (u) => {
+    try {
+      const { error } = await api.from('users').update({ blocked: u.blocked ? 0 : 1 }).eq('id', u.id);
+      if (error) throw error;
+      toast.success(u.blocked ? 'Acesso liberado.' : 'Acesso bloqueado.');
+      onUpdate();
+    } catch (e) { toast.error('Erro ao atualizar acesso: ' + (e.message || '')); }
+  };
 
 
   const RespChips = ({ list }) => (
@@ -4459,16 +4468,28 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
             {minhaEquipe.map(u => {
               const extras = (Array.isArray(u.system_ids) ? u.system_ids : []).map(String).filter(x => x !== String(u.system_id));
               return (
-                <div key={u.id} style={{ padding: '0.9rem', border: '1px solid var(--glass-border)', borderRadius: '12px', display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                <div key={u.id} style={{ padding: '0.9rem', border: `1px solid ${u.blocked ? '#ef444455' : 'var(--glass-border)'}`, borderRadius: '12px', display: 'flex', flexDirection: 'column', gap: '0.6rem', opacity: u.blocked ? 0.72 : 1 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-                    <span style={{ fontWeight: 700 }}>{u.name} <span style={{ fontWeight: 500, color: 'var(--text-muted)', fontSize: '0.8rem' }}>· {ROLE_LABELS[u.role]}</span></span>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem' }}>
-                      Principal:
-                      <select value={u.system_id ?? ''} onChange={e => setPrincipal(u, e.target.value)} style={{ margin: 0 }}>
-                        <option value="">— (só setor)</option>
-                        {subsAtribuiveis.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                      </select>
-                    </label>
+                    <span style={{ fontWeight: 700 }}>
+                      {u.name} <span style={{ fontWeight: 500, color: 'var(--text-muted)', fontSize: '0.8rem' }}>· {ROLE_LABELS[u.role]}</span>
+                      {u.blocked ? <span style={{ marginLeft: '8px', padding: '2px 8px', borderRadius: '999px', fontSize: '0.62rem', fontWeight: 800, textTransform: 'uppercase', background: 'rgba(239,68,68,0.15)', color: '#ef4444' }}>Bloqueado</span> : null}
+                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem' }}>
+                        Principal:
+                        <select value={u.system_id ?? ''} onChange={e => setPrincipal(u, e.target.value)} style={{ margin: 0 }}>
+                          <option value="">— (só setor)</option>
+                          {subsAtribuiveis.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                        </select>
+                      </label>
+                      <button type="button" onClick={() => toggleBloqueio(u)} title={u.blocked ? 'Liberar acesso' : 'Bloquear acesso'}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '4px 10px', borderRadius: '8px', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer',
+                          border: `1px solid ${u.blocked ? '#10b98155' : '#ef444455'}`,
+                          background: u.blocked ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
+                          color: u.blocked ? '#10b981' : '#ef4444' }}>
+                        <Lock size={13} /> {u.blocked ? 'Desbloquear' : 'Bloquear'}
+                      </button>
+                    </div>
                   </div>
                   {subsAtribuiveis.filter(s => String(s.id) !== String(u.system_id)).length > 0 && (
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' }}>

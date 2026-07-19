@@ -16,6 +16,7 @@ export async function POST(request) {
     // --- AUTENTICAÇÃO: nada é acessível sem login ---
     const usuario = await usuarioDaSessao(request);
     if (!usuario) return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
+    if (usuario.blocked) return NextResponse.json({ error: 'Acesso bloqueado.' }, { status: 403 }); // corta a sessão ativa na hora
     const admin = usuario.role === 'admin';
 
     // --- AUTORIZAÇÃO POR CARGO (o que seu cargo não alcança é bloqueado no servidor) ---
@@ -44,7 +45,7 @@ export async function POST(request) {
       const alvo = filters.find(f => f.type === 'eq' && f.col === 'id')?.val;
       if (String(alvo) !== String(usuario.id)) {
         const campos = data ? Object.keys(data) : [];
-        const permitidos = ['system_id', 'system_ids']; // só remaneja sub-setor; nunca role/senha/email
+        const permitidos = ['system_id', 'system_ids', 'blocked']; // remaneja sub-setor + bloqueia acesso; nunca role/senha/email
         const soLotacao = action === 'update' && campos.length > 0 && campos.every(c => permitidos.includes(c));
         let lidera = false;
         if (soLotacao && alvo != null && ['gerente', 'responsavel_subsetor'].includes(usuario.role)) {

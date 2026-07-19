@@ -716,7 +716,7 @@ function AppHeader({ currentView, setView, user, theme, toggleTheme, onLogout, b
   const menus = [
     { id: 'tickets', name: 'Tickets', icon: <UserIcon size={18} />, roles: ROLES },
     { id: 'kanban', name: 'Kanban', icon: <LayoutDashboard size={18} />, roles: ROLES }, // todos, inclusive funcionário (atende os recebidos)
-    { id: 'users', name: 'Usuários', icon: <Users size={18} />, roles: ['admin'] },
+    { id: 'users', name: 'Usuários', icon: <Users size={18} />, roles: ['admin', 'gerente', 'responsavel_subsetor'] },
     { id: 'setores', name: 'Setores', icon: <Layers size={18} />, roles: ['admin', 'gerente', 'responsavel_subsetor'] },
     { id: 'analytics', name: 'Relatórios', icon: <BarChart3 size={18} />, roles: manageRoles }, // depois de Setores; gerente/resp./admin — funcionário não
     { id: 'logs', name: 'Logs', icon: <Activity size={18} />, roles: ['admin'] },
@@ -4022,11 +4022,107 @@ function AnalyticsDashboard({ tickets, setores = [], user }) {
 }
 
 // --- Views Administrativas ---
+// Painel "Minha equipe": gerente/responsável gerencia os funcionários que cadastrou
+// (define o sub-setor principal, marca sub-setores extras e bloqueia/libera o acesso).
+function MinhaEquipePanel({ minhaEquipe = [], subsAtribuiveis = [], setPrincipal, toggleExtra, toggleBloqueio }) {
+  if (minhaEquipe.length === 0) {
+    return (
+      <div className="glass" style={{ padding: '2.5rem 1.5rem', textAlign: 'center', color: 'var(--text-muted)', border: '1px solid var(--glass-border)' }}>
+        Você ainda não cadastrou nenhum funcionário. Gere um <strong>link de registro</strong> no menu <strong>Setores</strong> e compartilhe.
+      </div>
+    );
+  }
+  return (
+    <div className="glass" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+      {minhaEquipe.map(u => {
+        const extras = (Array.isArray(u.system_ids) ? u.system_ids : []).map(String).filter(x => x !== String(u.system_id));
+        return (
+          <div key={u.id} style={{ padding: '0.9rem', border: `1px solid ${u.blocked ? '#ef444455' : 'var(--glass-border)'}`, borderRadius: '12px', display: 'flex', flexDirection: 'column', gap: '0.6rem', opacity: u.blocked ? 0.72 : 1 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+              <span style={{ fontWeight: 700 }}>
+                {u.name} <span style={{ fontWeight: 500, color: 'var(--text-muted)', fontSize: '0.8rem' }}>· {ROLE_LABELS[u.role]}</span>
+                {u.blocked ? <span style={{ marginLeft: '8px', padding: '2px 8px', borderRadius: '999px', fontSize: '0.62rem', fontWeight: 800, textTransform: 'uppercase', background: 'rgba(239,68,68,0.15)', color: '#ef4444' }}>Bloqueado</span> : null}
+              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem' }}>
+                  Principal:
+                  <select value={u.system_id ?? ''} onChange={e => setPrincipal(u, e.target.value)} style={{ margin: 0 }}>
+                    <option value="">— (só setor)</option>
+                    {subsAtribuiveis.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </label>
+                <button type="button" onClick={() => toggleBloqueio(u)} title={u.blocked ? 'Liberar acesso' : 'Bloquear acesso'}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '4px 10px', borderRadius: '8px', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer',
+                    border: `1px solid ${u.blocked ? '#10b98155' : '#ef444455'}`,
+                    background: u.blocked ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
+                    color: u.blocked ? '#10b981' : '#ef4444' }}>
+                  <Lock size={13} /> {u.blocked ? 'Desbloquear' : 'Bloquear'}
+                </button>
+              </div>
+            </div>
+            {subsAtribuiveis.filter(s => String(s.id) !== String(u.system_id)).length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Também atua em:</span>
+                {subsAtribuiveis.filter(s => String(s.id) !== String(u.system_id)).map(s => {
+                  const on = extras.includes(String(s.id));
+                  return (
+                    <button key={s.id} type="button" onClick={() => toggleExtra(u, s.id)}
+                      style={{ padding: '3px 10px', borderRadius: '999px', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer',
+                        border: `1px solid ${on ? 'var(--primary)' : 'var(--glass-border)'}`,
+                        background: on ? 'rgba(99,102,241,0.12)' : 'transparent',
+                        color: on ? 'var(--primary)' : 'var(--text-muted)' }}>
+                      {on ? '✓ ' : ''}{s.name}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers, setores = [], systems = [] }) {
   const setorNome = (id) => setores.find(s => s.id == id)?.name || '';
   const subSetorNome = (id) => systems.find(s => s.id == id)?.name || '';
   const dbUsers = allUsers || [];
   const respNome = (id) => (dbUsers.find(u => u.id == id)?.name) || '';
+  const isAdmin = user?.role === 'admin';
+
+  // --- Minha equipe (gerente/responsável): funcionários que ELE cadastrou (responsavel_id = ele) ---
+  const meusSetorIds = leadSetorIds(user, setores);
+  const meusSystemIds = leadSystemIds(user, systems);
+  const minhaEquipe = dbUsers.filter(u => u.responsavel_id != null && String(u.responsavel_id) === String(user?.id));
+  const subsAtribuiveis = systems.filter(sy => meusSetorIds.includes(sy.setor_id) || meusSystemIds.includes(sy.id));
+  // ponytail: só remaneja system_id/system_ids/blocked (o servidor só libera esses p/ o líder do afiliado)
+  const setPrincipal = async (u, sysId) => {
+    try {
+      const { error } = await api.from('users').update({ system_id: sysId ? Number(sysId) : null }).eq('id', u.id);
+      if (error) throw error;
+      toast.success('Sub-setor principal atualizado.');
+      parentFetchUsers();
+    } catch (e) { toast.error('Erro ao mover: ' + (e.message || '')); }
+  };
+  const toggleExtra = async (u, sysId) => {
+    const cur = (Array.isArray(u.system_ids) ? u.system_ids : []).map(String).filter(x => x !== String(u.system_id));
+    const next = cur.includes(String(sysId)) ? cur.filter(x => x !== String(sysId)) : [...cur, String(sysId)];
+    try {
+      const { error } = await api.from('users').update({ system_ids: next.map(Number) }).eq('id', u.id);
+      if (error) throw error;
+      parentFetchUsers();
+    } catch (e) { toast.error('Erro ao atualizar sub-setores: ' + (e.message || '')); }
+  };
+  const toggleBloqueio = async (u) => {
+    try {
+      const { error } = await api.from('users').update({ blocked: u.blocked ? 0 : 1 }).eq('id', u.id);
+      if (error) throw error;
+      toast.success(u.blocked ? 'Acesso liberado.' : 'Acesso bloqueado.');
+      parentFetchUsers();
+    } catch (e) { toast.error('Erro ao atualizar acesso: ' + (e.message || '')); }
+  };
+
   const [loading, setLoading] = useState(false);
   const [isNewUserModalOpen, setIsNewUserModalOpen] = useState(false);
   const [isEditUserModalOpen, setIsEditUserModalOpen] = useState(false);
@@ -4089,7 +4185,7 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
           <h2 style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '1.75rem', fontWeight: '800' }}>
             <Users color="var(--primary)" size={28} /> Gestão de Equipe
           </h2>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginTop: '4px' }}>Gerencie permissões e visualize o status dos membros.</p>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginTop: '4px' }}>{isAdmin ? 'Gerencie permissões e visualize o status dos membros.' : 'Gerencie os funcionários que você cadastrou: sub-setor, acesso e lotação.'}</p>
         </div>
         {user?.role === 'admin' && (
           <button className="btn btn-primary" onClick={() => { setNovoSetorId(''); setIsNewUserModalOpen(true); }}>
@@ -4098,6 +4194,9 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
         )}
       </div>
 
+      {!isAdmin ? (
+        <MinhaEquipePanel minhaEquipe={minhaEquipe} subsAtribuiveis={subsAtribuiveis} setPrincipal={setPrincipal} toggleExtra={toggleExtra} toggleBloqueio={toggleBloqueio} />
+      ) : (
       <div className="glass" style={{ padding: 0, overflow: 'hidden', border: '1px solid var(--glass-border)' }}>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
@@ -4184,6 +4283,7 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
           </table>
         </div>
       </div>
+      )}
       {mounted && isNewUserModalOpen && createPortal(
         <div className="overlay" onClick={() => setIsNewUserModalOpen(false)}>
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="glass modal" style={{ width: '400px', padding: '2rem' }} onClick={e => e.stopPropagation()}>
@@ -4407,38 +4507,7 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
     }
   };
 
-  // --- Minha equipe: funcionários que EU cadastrei (sou o responsável) ---
-  const minhaEquipe = allUsers.filter(u => u.responsavel_id != null && String(u.responsavel_id) === String(user?.id));
-  // sub-setores que posso atribuir: os do(s) meu(s) setor(es) + os que lidero
-  const subsAtribuiveis = systems.filter(sy => meusSetorIds.includes(sy.setor_id) || meusSystemIds.includes(sy.id));
-
-  // ponytail: só remaneja system_id/system_ids (setor_id fica; o servidor só libera esses dois p/ o líder)
-  const setPrincipal = async (u, sysId) => {
-    try {
-      const { error } = await api.from('users').update({ system_id: sysId ? Number(sysId) : null }).eq('id', u.id);
-      if (error) throw error;
-      toast.success('Sub-setor principal atualizado.');
-      onUpdate();
-    } catch (e) { toast.error('Erro ao mover: ' + (e.message || '')); }
-  };
-  const toggleExtra = async (u, sysId) => {
-    const cur = (Array.isArray(u.system_ids) ? u.system_ids : []).map(String).filter(x => x !== String(u.system_id));
-    const next = cur.includes(String(sysId)) ? cur.filter(x => x !== String(sysId)) : [...cur, String(sysId)];
-    try {
-      const { error } = await api.from('users').update({ system_ids: next.map(Number) }).eq('id', u.id);
-      if (error) throw error;
-      onUpdate();
-    } catch (e) { toast.error('Erro ao atualizar sub-setores: ' + (e.message || '')); }
-  };
-  const toggleBloqueio = async (u) => {
-    try {
-      const { error } = await api.from('users').update({ blocked: u.blocked ? 0 : 1 }).eq('id', u.id);
-      if (error) throw error;
-      toast.success(u.blocked ? 'Acesso liberado.' : 'Acesso bloqueado.');
-      onUpdate();
-    } catch (e) { toast.error('Erro ao atualizar acesso: ' + (e.message || '')); }
-  };
-
+  // (Gestão da equipe — "Minha equipe" — foi movida para o menu Usuários.)
 
   const RespChips = ({ list }) => (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
@@ -4476,66 +4545,6 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
         )}
       </div>
 
-      {minhaEquipe.length > 0 && (
-        <div className="glass" style={{ padding: '1.5rem', marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          <div>
-            <h3 style={{ fontWeight: 800, fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Users size={18} color="var(--primary)" /> Minha equipe
-            </h3>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.82rem', marginTop: '2px' }}>
-              Funcionários que você cadastrou. Defina o sub-setor principal e marque outros em que também atuam.
-            </p>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-            {minhaEquipe.map(u => {
-              const extras = (Array.isArray(u.system_ids) ? u.system_ids : []).map(String).filter(x => x !== String(u.system_id));
-              return (
-                <div key={u.id} style={{ padding: '0.9rem', border: `1px solid ${u.blocked ? '#ef444455' : 'var(--glass-border)'}`, borderRadius: '12px', display: 'flex', flexDirection: 'column', gap: '0.6rem', opacity: u.blocked ? 0.72 : 1 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-                    <span style={{ fontWeight: 700 }}>
-                      {u.name} <span style={{ fontWeight: 500, color: 'var(--text-muted)', fontSize: '0.8rem' }}>· {ROLE_LABELS[u.role]}</span>
-                      {u.blocked ? <span style={{ marginLeft: '8px', padding: '2px 8px', borderRadius: '999px', fontSize: '0.62rem', fontWeight: 800, textTransform: 'uppercase', background: 'rgba(239,68,68,0.15)', color: '#ef4444' }}>Bloqueado</span> : null}
-                    </span>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem' }}>
-                        Principal:
-                        <select value={u.system_id ?? ''} onChange={e => setPrincipal(u, e.target.value)} style={{ margin: 0 }}>
-                          <option value="">— (só setor)</option>
-                          {subsAtribuiveis.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                        </select>
-                      </label>
-                      <button type="button" onClick={() => toggleBloqueio(u)} title={u.blocked ? 'Liberar acesso' : 'Bloquear acesso'}
-                        style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '4px 10px', borderRadius: '8px', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer',
-                          border: `1px solid ${u.blocked ? '#10b98155' : '#ef444455'}`,
-                          background: u.blocked ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
-                          color: u.blocked ? '#10b981' : '#ef4444' }}>
-                        <Lock size={13} /> {u.blocked ? 'Desbloquear' : 'Bloquear'}
-                      </button>
-                    </div>
-                  </div>
-                  {subsAtribuiveis.filter(s => String(s.id) !== String(u.system_id)).length > 0 && (
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' }}>
-                      <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Também atua em:</span>
-                      {subsAtribuiveis.filter(s => String(s.id) !== String(u.system_id)).map(s => {
-                        const on = extras.includes(String(s.id));
-                        return (
-                          <button key={s.id} type="button" onClick={() => toggleExtra(u, s.id)}
-                            style={{ padding: '3px 10px', borderRadius: '999px', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer',
-                              border: `1px solid ${on ? 'var(--primary)' : 'var(--glass-border)'}`,
-                              background: on ? 'rgba(99,102,241,0.12)' : 'transparent',
-                              color: on ? 'var(--primary)' : 'var(--text-muted)' }}>
-                            {on ? '✓ ' : ''}{s.name}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
         {setoresVisiveis.map(setor => {

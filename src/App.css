@@ -1511,3 +1511,15 @@ label {
   z-index: 10;
   margin-bottom: 5px;
 }
+
+/* --- Inbox de conversas (bolha) estilo WhatsApp Web --- */
+.chat-inbox { display: flex; gap: 1rem; height: 100%; min-height: 0; }
+.chat-inbox .ci-list { flex: 0 0 340px; width: 340px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.chat-inbox .ci-chat { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.chat-inbox .ci-back { display: none; }  /* seta Voltar só no mobile */
+@media (max-width: 768px) {
+  .chat-inbox .ci-list { flex: 1 1 auto; width: 100%; }
+  .chat-inbox.has-selection .ci-list { display: none; }        /* selecionou → esconde a lista */
+  .chat-inbox:not(.has-selection) .ci-chat { display: none; }  /* sem seleção → só a lista */
+  .chat-inbox .ci-back { display: inline-flex; }
+}

@@ -450,6 +450,7 @@ function RegistroScreen({ hash }) {
   const id = Number(parts[2]);
   // atende → responsavel_subsetor; senão abre chamados → funcionario. Aceita links antigos ('dev'/'user').
   const papel = (parts[3] === 'dev' || parts[3] === 'responsavel_subsetor') ? 'responsavel_subsetor' : 'funcionario';
+  const responsavelId = Number(parts[4]) || null; // quem gerou o link = responsável (links antigos não têm)
 
   const [target, setTarget] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -487,7 +488,7 @@ function RegistroScreen({ hash }) {
       // Auto-registro público via rota dedicada (escrever em users pelo /api/data é só admin agora)
       const res = await fetch('/api/register', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: form.name, email: form.email, password: form.password, tipo, id, papel }),
+        body: JSON.stringify({ name: form.name, email: form.email, password: form.password, tipo, id, papel, responsavelId }),
       });
       const j = await res.json();
       if (!res.ok || !j.ok) throw new Error(j.error || 'Falha no cadastro.');
@@ -614,13 +615,23 @@ function RegistroScreen({ hash }) {
   );
 }
 
-// Modal p/ gerar/copiar o link de registro de um setor ou categoria
-function RegistroLinkModal({ tipo, target, onClose }) {
+// Modal p/ gerar/copiar o link de registro de um setor ou categoria.
+// `criador` = quem gera o link → vira o RESPONSÁVEL de quem se cadastrar por ele.
+// Se o alvo é um setor, o gerente pode mirar o setor todo OU um sub-setor dele (destino).
+function RegistroLinkModal({ tipo, target, criador, systems = [], onClose }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
   const [papel, setPapel] = useState('funcionario');
+  // destino: 'setor:<id>' | 'sub:<id>' — só faz sentido quando o alvo é um setor
+  const subsDoSetor = tipo === 'setor' ? systems.filter(s => String(s.setor_id) === String(target.id)) : [];
+  const [destino, setDestino] = useState('');
   if (!mounted) return null;
-  const link = `${window.location.origin}/#/registro/${tipo}/${target.id}/${papel}`;
+
+  // resolve tipo/id efetivos a partir do destino escolhido
+  let effTipo = tipo, effId = target.id;
+  if (tipo === 'setor' && destino.startsWith('sub:')) { effTipo = 'categoria'; effId = Number(destino.slice(4)); }
+
+  const link = `${window.location.origin}/#/registro/${effTipo}/${effId}/${papel}/${criador?.id ?? ''}`;
   const copiar = async () => {
     try { await navigator.clipboard.writeText(link); toast.success('Link copiado!'); }
     catch { toast.error('Copie o link manualmente.'); }
@@ -639,6 +650,16 @@ function RegistroLinkModal({ tipo, target, onClose }) {
           <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={20} /></button>
         </div>
 
+        {tipo === 'setor' && subsDoSetor.length > 0 && (
+          <div className="form-group">
+            <label style={{ fontSize: '0.75rem' }}>Cadastrar em…</label>
+            <select value={destino} onChange={e => setDestino(e.target.value)}>
+              <option value="">{target.name} (setor todo)</option>
+              {subsDoSetor.map(s => <option key={s.id} value={`sub:${s.id}`}>Sub-setor: {s.name}</option>)}
+            </select>
+          </div>
+        )}
+
         <div className="form-group">
           <label style={{ fontSize: '0.75rem' }}>Quem entrar por este link será…</label>
           <select value={papel} onChange={e => setPapel(e.target.value)}>
@@ -646,6 +667,12 @@ function RegistroLinkModal({ tipo, target, onClose }) {
             <option value="responsavel_subsetor">Membro que atende (vira responsável)</option>
           </select>
         </div>
+
+        {criador?.name && (
+          <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', margin: '2px 0 0' }}>
+            Responsável de quem se cadastrar: <strong>{criador.name}</strong>
+          </p>
+        )}
 
         <div style={{ marginTop: '1rem' }}>
           <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Link (envie para a pessoa)</label>
@@ -3977,6 +4004,7 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
   const setorNome = (id) => setores.find(s => s.id == id)?.name || '';
   const subSetorNome = (id) => systems.find(s => s.id == id)?.name || '';
   const dbUsers = allUsers || [];
+  const respNome = (id) => (dbUsers.find(u => u.id == id)?.name) || '';
   const [loading, setLoading] = useState(false);
   const [isNewUserModalOpen, setIsNewUserModalOpen] = useState(false);
   const [isEditUserModalOpen, setIsEditUserModalOpen] = useState(false);
@@ -4055,6 +4083,7 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
               <tr style={{ background: 'rgba(0,0,0,0.015)', borderBottom: '1px solid var(--glass-border)' }}>
                 <th style={{ padding: '1.25rem', fontSize: '0.75rem', fontWeight: '800', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Membro</th>
                 <th style={{ padding: '1.25rem', fontSize: '0.75rem', fontWeight: '800', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Cargo</th>
+                <th style={{ padding: '1.25rem', fontSize: '0.75rem', fontWeight: '800', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Responsável</th>
                 <th style={{ padding: '1.25rem', fontSize: '0.75rem', fontWeight: '800', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Status</th>
                 {user?.role === 'admin' && <th style={{ padding: '1.25rem', textAlign: 'right' }}>Ação</th>}
               </tr>
@@ -4101,6 +4130,11 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
                     }}>
                       {ROLE_LABELS[u.role] || u.role}
                     </span>
+                  </td>
+                  <td style={{ padding: '1.25rem', fontSize: '0.85rem' }}>
+                    {u.responsavel_id
+                      ? <span style={{ fontWeight: 600 }}>{respNome(u.responsavel_id)}</span>
+                      : <span style={{ color: 'var(--text-muted)' }}>—</span>}
                   </td>
                   <td style={{ padding: '1.25rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem' }}>
@@ -4350,6 +4384,30 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
     }
   };
 
+  // --- Minha equipe: funcionários que EU cadastrei (sou o responsável) ---
+  const minhaEquipe = allUsers.filter(u => u.responsavel_id != null && String(u.responsavel_id) === String(user?.id));
+  // sub-setores que posso atribuir: os do(s) meu(s) setor(es) + os que lidero
+  const subsAtribuiveis = systems.filter(sy => meusSetorIds.includes(sy.setor_id) || meusSystemIds.includes(sy.id));
+
+  // ponytail: só remaneja system_id/system_ids (setor_id fica; o servidor só libera esses dois p/ o líder)
+  const setPrincipal = async (u, sysId) => {
+    try {
+      const { error } = await api.from('users').update({ system_id: sysId ? Number(sysId) : null }).eq('id', u.id);
+      if (error) throw error;
+      toast.success('Sub-setor principal atualizado.');
+      onUpdate();
+    } catch (e) { toast.error('Erro ao mover: ' + (e.message || '')); }
+  };
+  const toggleExtra = async (u, sysId) => {
+    const cur = (Array.isArray(u.system_ids) ? u.system_ids : []).map(String).filter(x => x !== String(u.system_id));
+    const next = cur.includes(String(sysId)) ? cur.filter(x => x !== String(sysId)) : [...cur, String(sysId)];
+    try {
+      const { error } = await api.from('users').update({ system_ids: next.map(Number) }).eq('id', u.id);
+      if (error) throw error;
+      onUpdate();
+    } catch (e) { toast.error('Erro ao atualizar sub-setores: ' + (e.message || '')); }
+  };
+
 
   const RespChips = ({ list }) => (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
@@ -4362,9 +4420,11 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
   // Chip de membro com o cargo (cor por cargo) — usado no setor e sub-setor
   const ChipMembro = ({ m }) => {
     const c = ROLE_COLORS[m.role] || ROLE_COLORS.funcionario;
+    const resp = m.responsavel_id ? nomeUsuario(m.responsavel_id) : null;
     return (
-      <span title={ROLE_LABELS[m.role]} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '3px 10px', borderRadius: '999px', fontSize: '0.72rem', fontWeight: 700, background: c.bg, color: c.fg, border: `1px solid ${c.fg}22` }}>
+      <span title={resp ? `${ROLE_LABELS[m.role]} · Responsável: ${resp}` : ROLE_LABELS[m.role]} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '3px 10px', borderRadius: '999px', fontSize: '0.72rem', fontWeight: 700, background: c.bg, color: c.fg, border: `1px solid ${c.fg}22` }}>
         {m.name} · {ROLE_LABELS[m.role]}
+        {resp && <em style={{ fontStyle: 'normal', fontWeight: 500, opacity: 0.75 }}>· resp: {resp}</em>}
       </span>
     );
   };
@@ -4384,6 +4444,55 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
           </button>
         )}
       </div>
+
+      {minhaEquipe.length > 0 && (
+        <div className="glass" style={{ padding: '1.5rem', marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div>
+            <h3 style={{ fontWeight: 800, fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Users size={18} color="var(--primary)" /> Minha equipe
+            </h3>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.82rem', marginTop: '2px' }}>
+              Funcionários que você cadastrou. Defina o sub-setor principal e marque outros em que também atuam.
+            </p>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            {minhaEquipe.map(u => {
+              const extras = (Array.isArray(u.system_ids) ? u.system_ids : []).map(String).filter(x => x !== String(u.system_id));
+              return (
+                <div key={u.id} style={{ padding: '0.9rem', border: '1px solid var(--glass-border)', borderRadius: '12px', display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <span style={{ fontWeight: 700 }}>{u.name} <span style={{ fontWeight: 500, color: 'var(--text-muted)', fontSize: '0.8rem' }}>· {ROLE_LABELS[u.role]}</span></span>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem' }}>
+                      Principal:
+                      <select value={u.system_id ?? ''} onChange={e => setPrincipal(u, e.target.value)} style={{ margin: 0 }}>
+                        <option value="">— (só setor)</option>
+                        {subsAtribuiveis.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      </select>
+                    </label>
+                  </div>
+                  {subsAtribuiveis.filter(s => String(s.id) !== String(u.system_id)).length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' }}>
+                      <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Também atua em:</span>
+                      {subsAtribuiveis.filter(s => String(s.id) !== String(u.system_id)).map(s => {
+                        const on = extras.includes(String(s.id));
+                        return (
+                          <button key={s.id} type="button" onClick={() => toggleExtra(u, s.id)}
+                            style={{ padding: '3px 10px', borderRadius: '999px', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer',
+                              border: `1px solid ${on ? 'var(--primary)' : 'var(--glass-border)'}`,
+                              background: on ? 'rgba(99,102,241,0.12)' : 'transparent',
+                              color: on ? 'var(--primary)' : 'var(--text-muted)' }}>
+                            {on ? '✓ ' : ''}{s.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
         {setoresVisiveis.map(setor => {
@@ -4409,15 +4518,15 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
                       ? gerentesSetor.map(m => <ChipMembro key={m.id} m={m} />)
                       : <span style={{ fontStyle: 'italic', fontSize: '0.8rem', color: 'var(--text-muted)' }}>Sem gerente no setor</span>}
                   </div>
-                  {isAdmin && (
-                    <div style={{ display: 'flex', gap: '4px' }}>
-                      <button onClick={() => openModal('new_system', 'systems', null, setor.id)} className="icon-btn" title="Adicionar Sub-Setor"><Plus size={14} /></button>
-                      <button onClick={() => setLinkModal({ tipo: 'setor', target: setor })} className="icon-btn" title="Link de registro"><Link2 size={14} /></button>
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    {isAdmin && <button onClick={() => openModal('new_system', 'systems', null, setor.id)} className="icon-btn" title="Adicionar Sub-Setor"><Plus size={14} /></button>}
+                    {podeConfigSetor(setor) && <button onClick={() => setLinkModal({ tipo: 'setor', target: setor })} className="icon-btn" title="Link de registro"><Link2 size={14} /></button>}
+                    {isAdmin && <>
                       <button onClick={() => openModal('edit_name', 'setores', setor)} className="icon-btn" title="Editar Nome"><Pencil size={14} /></button>
                       <button onClick={() => openModal('manage_resps', 'setores', setor)} className="icon-btn" title="Equipe do Setor"><UserPlus size={14} /></button>
                       <button onClick={() => openModal('delete_confirm', 'setores', setor)} className="icon-btn logout" title="Excluir Setor"><Trash2 size={14} /></button>
-                    </div>
-                  )}
+                    </>}
+                  </div>
                 </div>
               </div>
 
@@ -4457,14 +4566,14 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
                                 ? <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>via gerente do setor</span>
                                 : <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>Sem responsável</span>)}
                         </div>
-                        {isAdmin && (
-                          <div style={{ display: 'flex', gap: '2px', flexShrink: 0 }}>
-                            <button onClick={() => setLinkModal({ tipo: 'categoria', target: sys })} className="icon-btn" title="Link de registro"><Link2 size={12} /></button>
+                        <div style={{ display: 'flex', gap: '2px', flexShrink: 0 }}>
+                          {podeConfigSub(sys) && <button onClick={() => setLinkModal({ tipo: 'categoria', target: sys })} className="icon-btn" title="Link de registro"><Link2 size={12} /></button>}
+                          {isAdmin && <>
                             <button onClick={() => openModal('edit_name', 'systems', sys)} className="icon-btn" title="Editar Nome"><Pencil size={12} /></button>
                             <button onClick={() => openModal('manage_resps', 'systems', sys)} className="icon-btn" title="Responsáveis"><UserPlus size={12} /></button>
                             <button onClick={() => openModal('delete_confirm', 'systems', sys)} className="icon-btn logout" title="Excluir"><Trash2 size={12} /></button>
-                          </div>
-                        )}
+                          </>}
+                        </div>
                       </div>
                       {/* Config do sub-setor: time pega a demanda */}
                       {(podeConfigSub(sys) || sys.auto_pool) && (
@@ -4503,7 +4612,7 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
 
       <AnimatePresence>
         {linkModal && (
-          <RegistroLinkModal tipo={linkModal.tipo} target={linkModal.target} onClose={() => setLinkModal(null)} />
+          <RegistroLinkModal tipo={linkModal.tipo} target={linkModal.target} criador={user} systems={systems} onClose={() => setLinkModal(null)} />
         )}
       </AnimatePresence>
     </div>

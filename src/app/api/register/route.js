@@ -5,7 +5,7 @@ import { hashSenha } from '@/lib/auth.js';
 // Auto-registro por link (público). Insere o usuário e, se for responsável, anexa aos primary_responsibles.
 export async function POST(request) {
   try {
-    const { name, email, password, tipo, id, papel } = await request.json();
+    const { name, email, password, tipo, id, papel, responsavelId } = await request.json();
     if (!name || !email || !password) return NextResponse.json({ error: 'Preencha nome, e-mail e senha.' }, { status: 400 });
     const senhaHash = hashSenha(password);
 
@@ -15,10 +15,16 @@ export async function POST(request) {
     const alvo = alvoRows[0];
     const setorId = tipo === 'setor' ? id : (alvo?.setor_id ?? null);
     const systemId = tipo === 'setor' ? null : id;
+    // responsável = quem criou o link (se veio um id válido de usuário existente)
+    let respId = Number(responsavelId) || null;
+    if (respId) {
+      const [uRows] = await pool.query('SELECT id FROM users WHERE id = ? LIMIT 1', [respId]);
+      if (!uRows[0]) respId = null;
+    }
 
     const [r] = await pool.query(
-      'INSERT INTO users (name, email, password, role, setor_id, system_id, avatar) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [name, email, senhaHash, role, setorId, systemId, `https://api.dicebear.com/7.x/avataaars/svg?seed=${email}`]
+      'INSERT INTO users (name, email, password, role, setor_id, system_id, responsavel_id, avatar) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [name, email, senhaHash, role, setorId, systemId, respId, `https://api.dicebear.com/7.x/avataaars/svg?seed=${email}`]
     );
     const newId = r.insertId;
 

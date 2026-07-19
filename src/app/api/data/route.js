@@ -38,10 +38,23 @@ export async function POST(request) {
         : (usuario.role === 'responsavel_subsetor' && String(usuario.system_id) === String(alvoId));
       if (!noPrimary && !porCargo) return semPermissao();
     }
-    // Escrever em users: só admin — exceto a PRÓPRIA linha (is_online / perfil)
+    // Escrever em users: só admin — exceto (a) a PRÓPRIA linha (is_online / perfil)
+    // ou (b) o RESPONSÁVEL editando a LOTAÇÃO (system_id/system_ids) de um funcionário que ele lidera.
     if (table === 'users' && action !== 'select' && !admin) {
       const alvo = filters.find(f => f.type === 'eq' && f.col === 'id')?.val;
-      if (String(alvo) !== String(usuario.id)) return semPermissao();
+      if (String(alvo) !== String(usuario.id)) {
+        const campos = data ? Object.keys(data) : [];
+        const permitidos = ['system_id', 'system_ids']; // só remaneja sub-setor; nunca role/senha/email
+        const soLotacao = action === 'update' && campos.length > 0 && campos.every(c => permitidos.includes(c));
+        let lidera = false;
+        if (soLotacao && alvo != null && ['gerente', 'responsavel_subsetor'].includes(usuario.role)) {
+          const [tRows] = await pool.query('SELECT responsavel_id FROM users WHERE id = ? LIMIT 1', [alvo]);
+          lidera = tRows[0] && String(tRows[0].responsavel_id) === String(usuario.id);
+        }
+        // ponytail: valida só o vínculo responsavel_id, não se o sub-setor está no escopo do líder;
+        // a UI só oferece sub-setores do líder e a visibilidade é client-side (como o resto do app).
+        if (!lidera) return semPermissao();
+      }
     }
     // Ler logs do sistema: só admin
     if (table === 'system_logs' && action === 'select' && !admin) return semPermissao();

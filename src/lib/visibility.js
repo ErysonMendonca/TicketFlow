@@ -6,6 +6,14 @@
 
 const arr = (v) => (Array.isArray(v) ? v : []);
 
+// sub-setores em que o usuário trabalha: principal (system_id) ∪ extras (system_ids)
+export function userSystemIds(user) {
+  if (!user) return [];
+  const ids = [...arr(user.system_ids)];
+  if (user.system_id != null) ids.push(user.system_id);
+  return [...new Set(ids.map(String))];
+}
+
 // setores que o usuário lidera (responsável explícito OU gerente lotado no setor)
 export function leadSetorIds(user, setoresList = []) {
   if (!user) return [];
@@ -33,10 +41,11 @@ export function colaboradoresDoSetor(setorId, setoresList = [], systemsList = []
   const ids = [...arr(setor?.primary_responsibles)];
   const systemsDoSetor = arr(systemsList).filter(sys => sys.setor_id === setorId);
   for (const sys of systemsDoSetor) ids.push(...arr(sys.primary_responsibles));
-  const systemIds = new Set(systemsDoSetor.map(s => s.id));
+  const systemIds = new Set(systemsDoSetor.map(s => String(s.id)));
   for (const u of arr(allUsers)) {
-    // funcionário/colaborador vinculado a um sub-setor do setor OU lotado direto no setor
-    if ((u.system_id != null && systemIds.has(u.system_id)) || String(u.setor_id) === String(setorId)) ids.push(u.id);
+    // funcionário/colaborador vinculado a um sub-setor do setor (principal ou extra) OU lotado direto no setor
+    const emSub = userSystemIds(u).some(sid => systemIds.has(sid));
+    if (emSub || String(u.setor_id) === String(setorId)) ids.push(u.id);
   }
   return [...new Set(ids)];
 }
@@ -54,12 +63,12 @@ export function isColaboradorDoSetor(user, setorId, setoresList = [], systemsLis
   return !!user && colaboradoresDoSetor(setorId, setoresList, systemsList).includes(user.id);
 }
 
-// O usuário é do setor? (lotado direto no setor OU num sub-setor dele) — sem depender de allUsers.
+// O usuário é do setor? (lotado direto no setor OU num sub-setor dele — principal ou extra) — sem depender de allUsers.
 export function noSetor(user, setorId, systemsList = []) {
   if (!user || setorId == null) return false;
   if (String(user.setor_id) === String(setorId)) return true;
-  const sys = arr(systemsList).find(s => String(s.id) === String(user.system_id));
-  return !!sys && String(sys.setor_id) === String(setorId);
+  const meus = new Set(userSystemIds(user));
+  return arr(systemsList).some(s => meus.has(String(s.id)) && String(s.setor_id) === String(setorId));
 }
 
 // Um ticket é visível para o usuário? (admin tudo; funcionario só próprios/compartilhados;

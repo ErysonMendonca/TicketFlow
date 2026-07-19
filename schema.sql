@@ -11,10 +11,13 @@ CREATE TABLE IF NOT EXISTS users (
     avatar VARCHAR(500),
     is_online BOOLEAN DEFAULT FALSE,
     setor_id INT NULL, -- setor ao qual o usuário pertence (origem dos tickets que ele abre)
-    system_id INT NULL, -- sub-setor (system) ao qual o funcionário/colaborador pertence (um nível abaixo do setor)
+    system_id INT NULL, -- sub-setor (system) PRINCIPAL do funcionário/colaborador (um nível abaixo do setor)
+    system_ids JSON NULL, -- sub-setores EXTRAS onde o funcionário também trabalha (além do principal); visibilidade = system_id ∪ system_ids
+    responsavel_id INT NULL, -- quem é o RESPONSÁVEL deste usuário (gerente/resp. que criou o link de cadastro)
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     KEY idx_users_setor (setor_id),
-    KEY idx_users_system (system_id)
+    KEY idx_users_system (system_id),
+    KEY idx_users_responsavel (responsavel_id)
     -- FKs de users.setor_id/system_id adicionadas no fim do arquivo (setores/systems são criadas depois)
 );
 
@@ -126,6 +129,7 @@ CREATE TABLE IF NOT EXISTS password_resets (
 -- FKs de users.setor_id/system_id (declaradas aqui porque `setores`/`systems` são criadas depois de `users`)
 ALTER TABLE users ADD CONSTRAINT fk_users_setor FOREIGN KEY (setor_id) REFERENCES setores(id) ON DELETE SET NULL;
 ALTER TABLE users ADD CONSTRAINT fk_users_system FOREIGN KEY (system_id) REFERENCES systems(id) ON DELETE SET NULL;
+ALTER TABLE users ADD CONSTRAINT fk_users_responsavel FOREIGN KEY (responsavel_id) REFERENCES users(id) ON DELETE SET NULL;
 
 -- Dados de Exemplo Base
 INSERT IGNORE INTO users (name, email, password, role) VALUES

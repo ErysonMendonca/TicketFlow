@@ -1,6 +1,6 @@
 // Self-check da regra de visibilidade. Rodar: node src/lib/visibility.test.mjs
 import assert from 'node:assert';
-import { canSeeTicket, leadSetorIds, leadSystemIds, colaboradoresDoSetor, podeAtribuir, isColaboradorDoSetor } from './visibility.js';
+import { canSeeTicket, leadSetorIds, leadSystemIds, colaboradoresDoSetor, podeAtribuir, isColaboradorDoSetor, userSystemIds, noSetor } from './visibility.js';
 
 const setores = [{ id: 1, primary_responsibles: [10] }, { id: 2, primary_responsibles: [20] }];
 const systems = [{ id: 100, setor_id: 1, primary_responsibles: [30] }];
@@ -59,5 +59,20 @@ assert.deepEqual(colaboradoresDoSetor(1, setores, systems).sort((a, b) => a - b)
 const tAtribuido = { setor_id: 2, platform: null, created_by: 999, shared_with: [], responsible: 'F40' };
 assert.equal(canSeeTicket(tAtribuido, funcSub, setores, systems), true);
 assert.equal(canSeeTicket(tAtribuido, func, setores, systems), false);
+
+// --- Funcionário em VÁRIOS sub-setores (system_id principal ∪ system_ids extras) ---
+const systems2 = [{ id: 100, setor_id: 1, primary_responsibles: [30] }, { id: 200, setor_id: 2, primary_responsibles: [] }];
+const funcMulti = { id: 50, role: 'funcionario', name: 'F50', system_id: 100, system_ids: [200] }; // sub-setor 100 (setor 1) + extra 200 (setor 2)
+assert.deepEqual(userSystemIds(funcMulti).sort(), ['100', '200']);
+// entra no pool de direcionamento tanto do setor 1 quanto do setor 2
+assert.ok(colaboradoresDoSetor(1, setores, systems2, [funcMulti]).includes(50));
+assert.ok(colaboradoresDoSetor(2, setores, systems2, [funcMulti]).includes(50));
+// noSetor considera o sub-setor extra
+assert.equal(noSetor(funcMulti, 2, systems2), true);  // via extra 200
+assert.equal(noSetor(func, 2, systems2), false);
+// demanda ABERTA (open_pool) do setor 2 fica visível pelo vínculo extra
+const tPool2 = { setor_id: 2, platform: '200', created_by: 999, shared_with: [], open_pool: 1 };
+assert.equal(canSeeTicket(tPool2, funcMulti, setores, systems2), true);
+assert.equal(canSeeTicket(tPool2, func, setores, systems2), false);
 
 console.log('visibility.test: OK');

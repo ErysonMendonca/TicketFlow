@@ -2,6 +2,21 @@ import { NextResponse } from 'next/server';
 import { pool } from '@/lib/db.js';
 import { hashSenha } from '@/lib/auth.js';
 
+// Lookup PÚBLICO do alvo do link (só id+nome) — a tela de cadastro é anônima e não pode usar /api/data (exige login).
+export async function GET(request) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const tipo = searchParams.get('tipo');
+    const id = Number(searchParams.get('id'));
+    if (!id) return NextResponse.json({ target: null }, { status: 400 });
+    const table = tipo === 'setor' ? 'setores' : 'systems'; // tabela fixa por tipo (sem injeção)
+    const [rows] = await pool.query(`SELECT id, name FROM ${table} WHERE id = ? LIMIT 1`, [id]);
+    return NextResponse.json({ target: rows[0] || null });
+  } catch (e) {
+    return NextResponse.json({ target: null, error: e.message }, { status: 500 });
+  }
+}
+
 // Auto-registro por link (público). Insere o usuário e, se for responsável, anexa aos primary_responsibles.
 export async function POST(request) {
   try {

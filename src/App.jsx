@@ -464,9 +464,12 @@ function RegistroScreen({ hash }) {
 
   useEffect(() => {
     (async () => {
-      const table = tipo === 'setor' ? 'setores' : 'systems';
-      const { data } = await api.from(table).select('*').eq('id', id).single();
-      setTarget(data || null);
+      // Lookup público (a tela é anônima; /api/data exige login).
+      try {
+        const res = await fetch(`/api/register?tipo=${encodeURIComponent(tipo)}&id=${id}`);
+        const j = await res.json();
+        setTarget(j.target || null);
+      } catch { setTarget(null); }
       setLoading(false);
     })();
   }, []);

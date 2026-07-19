@@ -57,9 +57,9 @@ export function colaboradoresDoSetor(setorId, setoresList = [], systemsList = []
   for (const sys of systemsDoSetor) ids.push(...arr(sys.primary_responsibles));
   const systemIds = new Set(systemsDoSetor.map(s => String(s.id)));
   for (const u of arr(allUsers)) {
-    // funcionário/colaborador vinculado a um sub-setor do setor (principal ou extra) OU lotado direto no setor
+    // funcionário/colaborador que atua num sub-setor do setor (principal/extra) OU no setor (principal/extra)
     const emSub = userSystemIds(u).some(sid => systemIds.has(sid));
-    if (emSub || String(u.setor_id) === String(setorId)) ids.push(u.id);
+    if (emSub || userSetorIds(u).includes(String(setorId))) ids.push(u.id);
   }
   return [...new Set(ids)];
 }

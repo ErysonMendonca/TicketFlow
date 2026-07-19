@@ -99,6 +99,9 @@ assert.deepEqual(userSetorIds(multiSetor).sort(), ['1', '2']);
 assert.equal(noSetor(multiSetor, 1, systems2), true);  // principal
 assert.equal(noSetor(multiSetor, 2, systems2), true);  // extra
 assert.equal(noSetor(multiSetor, 3, systems2), false);
+// listado como colaborador nos DOIS setores (principal e extra)
+assert.ok(colaboradoresDoSetor(1, setores, systems2, [multiSetor]).includes(70));
+assert.ok(colaboradoresDoSetor(2, setores, systems2, [multiSetor]).includes(70));
 // vê open_pool dos dois setores
 assert.equal(canSeeTicket({ setor_id: 2, platform: null, created_by: 999, shared_with: [], open_pool: 1 }, multiSetor, setores, systems2), true);
 

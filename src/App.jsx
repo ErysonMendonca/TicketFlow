@@ -56,7 +56,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { api } from './lib/api';
 import toast, { Toaster } from 'react-hot-toast';
 import { PLATFORMS, DEV_STATUS, URGENCY_LEVELS, URGENCIA_MAXIMA, OTHER_STATUS, MOCK_USERS, TICKET_TYPES, ROLES, ROLE_LABELS, ROLE_COLORS, isManager, BOARD_ROLES } from './constants';
-import { canSeeTicket, colaboradoresDoSetor, podeAtribuir, isColaboradorDoSetor, leadSetorIds, leadSystemIds, noSetor, afiliadosDe } from './lib/visibility';
+import { canSeeTicket, colaboradoresDoSetor, podeAtribuir, isColaboradorDoSetor, leadSetorIds, leadSystemIds, noSetor, afiliadosDe, userSetorIds, userSystemIds } from './lib/visibility';
 import { io } from 'socket.io-client';
 
 // WebSocket: em produção conecta no mesmo domínio (proxy Nginx → servidor de socket);
@@ -4596,7 +4596,8 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
           const sistemasDoSetor = systems.filter(sys => sys.setor_id == setor.id);
           // Membros do setor (vinculados ao setor OU a um sub-setor dele), separados por cargo
           const subIds = new Set(sistemasDoSetor.map(s => String(s.id)));
-          const membros = allUsers.filter(u => String(u.setor_id) === String(setor.id) || (u.system_id != null && subIds.has(String(u.system_id))));
+          // Membro do setor = atua no setor (principal/extra) OU num sub-setor dele (principal/extra) — considera setor_ids/system_ids
+          const membros = allUsers.filter(u => userSetorIds(u).includes(String(setor.id)) || userSystemIds(u).some(sid => subIds.has(sid)));
           const gerentesSetor = membros.filter(u => u.role === 'gerente');
           const funcsSetor = membros.filter(u => u.role === 'funcionario');
           return (
@@ -4646,9 +4647,9 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
               {sistemasDoSetor.length > 0 && (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>
                   {sistemasDoSetor.map(sys => {
-                    // Responsáveis do sub-setor = resp. sub-setor lotado nele (cargo+system_id) + primary_responsibles
+                    // Responsáveis do sub-setor = resp. sub-setor que atua nele (principal/extra) + primary_responsibles
                     const idsResp = new Set(Array.isArray(sys.primary_responsibles) ? sys.primary_responsibles : []);
-                    allUsers.forEach(u => { if (String(u.system_id) === String(sys.id) && u.role === 'responsavel_subsetor') idsResp.add(u.id); });
+                    allUsers.forEach(u => { if (u.role === 'responsavel_subsetor' && userSystemIds(u).includes(String(sys.id))) idsResp.add(u.id); });
                     const respsSub = [...idsResp].map(id => allUsers.find(u => u.id === id)).filter(Boolean);
                     return (
                     <div key={sys.id} style={{ padding: '1rem', borderRadius: '12px', border: '1px solid var(--glass-border)', background: 'rgba(0,0,0,0.02)', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>

@@ -4565,11 +4565,9 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
   // Chip de membro com o cargo (cor por cargo) — usado no setor e sub-setor
   const ChipMembro = ({ m }) => {
     const c = ROLE_COLORS[m.role] || ROLE_COLORS.funcionario;
-    const resp = m.responsavel_id ? nomeUsuario(m.responsavel_id) : null;
     return (
-      <span title={resp ? `${ROLE_LABELS[m.role]} · Responsável: ${resp}` : ROLE_LABELS[m.role]} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '3px 10px', borderRadius: '999px', fontSize: '0.72rem', fontWeight: 700, background: c.bg, color: c.fg, border: `1px solid ${c.fg}22` }}>
+      <span title={ROLE_LABELS[m.role]} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '3px 10px', borderRadius: '999px', fontSize: '0.72rem', fontWeight: 700, background: c.bg, color: c.fg, border: `1px solid ${c.fg}22` }}>
         {m.name} · {ROLE_LABELS[m.role]}
-        {resp && <em style={{ fontStyle: 'normal', fontWeight: 500, opacity: 0.75 }}>· resp: {resp}</em>}
       </span>
     );
   };

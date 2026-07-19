@@ -445,15 +445,10 @@ function LoginScreen({ onLogin }) {
 
 // Tela pública de auto-registro via link (#/registro/<tipo>/<id>/<papel>) — mesma casca glass do login
 function RegistroScreen({ hash }) {
-  const parts = hash.replace(/^#\/?/, '').split('/'); // ['registro','setor','2','user']
-  const tipo = parts[1];                 // 'setor' | 'categoria'
-  const id = Number(parts[2]);
-  // cargo do link: gerente | responsavel_subsetor | funcionario (aceita legado 'dev'/'user').
-  const papel = parts[3] === 'gerente' ? 'gerente'
-    : (parts[3] === 'dev' || parts[3] === 'responsavel_subsetor') ? 'responsavel_subsetor'
-    : 'funcionario';
-  const responsavelId = Number(parts[4]) || null; // quem gerou o link = responsável (links antigos não têm)
-
+  // #/registro/<token> — o token assinado carrega tipo/id/papel/criador (não vêm da URL crua).
+  const token = hash.replace(/^#\/?registro\/?/, '');
+  const [tipo, setTipo] = useState(null);      // 'setor' | 'categoria' (resolvido do token pelo servidor)
+  const [papel, setPapel] = useState('funcionario');
   const [target, setTarget] = useState(null);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({ name: '', email: '', password: '' });
@@ -464,11 +459,12 @@ function RegistroScreen({ hash }) {
 
   useEffect(() => {
     (async () => {
-      // Lookup público (a tela é anônima; /api/data exige login).
       try {
-        const res = await fetch(`/api/register?tipo=${encodeURIComponent(tipo)}&id=${id}`);
+        const res = await fetch(`/api/register?token=${encodeURIComponent(token)}`);
         const j = await res.json();
         setTarget(j.target || null);
+        if (j.tipo) setTipo(j.tipo);
+        if (j.papel) setPapel(j.papel);
       } catch { setTarget(null); }
       setLoading(false);
     })();
@@ -493,7 +489,7 @@ function RegistroScreen({ hash }) {
       // Auto-registro público via rota dedicada (escrever em users pelo /api/data é só admin agora)
       const res = await fetch('/api/register', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: form.name, email: form.email, password: form.password, tipo, id, papel, responsavelId }),
+        body: JSON.stringify({ name: form.name, email: form.email, password: form.password, token }),
       });
       const j = await res.json();
       if (!res.ok || !j.ok) throw new Error(j.error || 'Falha no cadastro.');
@@ -625,17 +621,16 @@ function RegistroScreen({ hash }) {
 // Se o alvo é um setor, o gerente pode mirar o setor todo OU um sub-setor dele (destino).
 function RegistroLinkModal({ tipo, target, criador, systems = [], onClose }) {
   const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
   const [papel, setPapel] = useState('funcionario'); // 'gestor' | 'funcionario' (role real derivado do destino)
-  // destino: 'setor:<id>' | 'sub:<id>' — só faz sentido quando o alvo é um setor
-  const subsDoSetor = tipo === 'setor' ? systems.filter(s => String(s.setor_id) === String(target.id)) : [];
-  const [destino, setDestino] = useState('');
-  if (!mounted) return null;
+  const [destino, setDestino] = useState(''); // 'sub:<id>' quando o gerente mira um sub-setor
+  const [link, setLink] = useState('');
+  const [gerando, setGerando] = useState(false);
+  useEffect(() => setMounted(true), []);
 
+  const subsDoSetor = tipo === 'setor' ? systems.filter(s => String(s.setor_id) === String(target.id)) : [];
   // resolve tipo/id efetivos a partir do destino escolhido
   let effTipo = tipo, effId = target.id;
   if (tipo === 'setor' && destino.startsWith('sub:')) { effTipo = 'categoria'; effId = Number(destino.slice(4)); }
-
   // Cargo de gestão depende do destino: setor → Gerente; sub-setor → Responsável do sub-setor.
   const gestorRole = effTipo === 'setor' ? 'gerente' : 'responsavel_subsetor';
   const gestorLabel = effTipo === 'setor' ? 'Gerente' : 'Responsável do sub-setor';
@@ -646,8 +641,30 @@ function RegistroLinkModal({ tipo, target, criador, systems = [], onClose }) {
     funcionario: 'Ao entrar: abre chamados e atende só as demandas direcionadas a ele (ou abertas ao setor para puxar).',
   };
 
-  const link = `${window.location.origin}/#/registro/${effTipo}/${effId}/${effRole}/${criador?.id ?? ''}`;
+  // O link é ASSINADO pelo servidor (o papel/alvo não podem vir da URL) — pede um token ao gerar/mudar a seleção.
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      setGerando(true); setLink('');
+      try {
+        const tk = (typeof localStorage !== 'undefined') ? localStorage.getItem('sessionToken') : null;
+        const res = await fetch('/api/register-link', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...(tk ? { 'x-session-token': tk } : {}) },
+          body: JSON.stringify({ tipo: effTipo, id: effId, papel: effRole }),
+        });
+        const j = await res.json();
+        if (!cancel) setLink(res.ok && j.token ? `${window.location.origin}/#/registro/${j.token}` : '');
+      } catch { if (!cancel) setLink(''); }
+      finally { if (!cancel) setGerando(false); }
+    })();
+    return () => { cancel = true; };
+  }, [effTipo, effId, effRole]);
+
+  if (!mounted) return null;
+
   const copiar = async () => {
+    if (!link) return;
     try { await navigator.clipboard.writeText(link); toast.success('Link copiado!'); }
     catch { toast.error('Copie o link manualmente.'); }
   };
@@ -695,8 +712,8 @@ function RegistroLinkModal({ tipo, target, criador, systems = [], onClose }) {
         <div style={{ marginTop: '1rem' }}>
           <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Link (envie para a pessoa)</label>
           <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
-            <input readOnly value={link} onFocus={e => e.target.select()} style={{ flex: 1, fontSize: '0.8rem', margin: 0 }} />
-            <button className="btn btn-primary" style={{ flex: '0 0 auto' }} onClick={copiar}>Copiar</button>
+            <input readOnly value={gerando ? 'Gerando link…' : link} onFocus={e => e.target.select()} style={{ flex: 1, fontSize: '0.8rem', margin: 0 }} />
+            <button className="btn btn-primary" style={{ flex: '0 0 auto' }} onClick={copiar} disabled={gerando || !link}>Copiar</button>
           </div>
         </div>
       </motion.div>

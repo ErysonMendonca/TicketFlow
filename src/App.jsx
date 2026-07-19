@@ -4562,7 +4562,7 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
                       : <span style={{ fontStyle: 'italic', fontSize: '0.8rem', color: 'var(--text-muted)' }}>Sem gerente no setor</span>}
                   </div>
                   <div style={{ display: 'flex', gap: '4px' }}>
-                    {isAdmin && <button onClick={() => openModal('new_system', 'systems', null, setor.id)} className="icon-btn" title="Adicionar Sub-Setor"><Plus size={14} /></button>}
+                    {podeConfigSetor(setor) && <button onClick={() => openModal('new_system', 'systems', null, setor.id)} className="icon-btn" title="Adicionar Sub-Setor"><Plus size={14} /></button>}
                     {podeConfigSetor(setor) && <button onClick={() => setLinkModal({ tipo: 'setor', target: setor })} className="icon-btn" title="Link de registro"><Link2 size={14} /></button>}
                     {isAdmin && <>
                       <button onClick={() => openModal('edit_name', 'setores', setor)} className="icon-btn" title="Editar Nome"><Pencil size={14} /></button>
@@ -4610,7 +4610,7 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
                                 : <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>Sem responsável</span>)}
                         </div>
                         <div style={{ display: 'flex', gap: '2px', flexShrink: 0 }}>
-                          {podeConfigSub(sys) && <button onClick={() => setLinkModal({ tipo: 'categoria', target: sys })} className="icon-btn" title="Link de registro"><Link2 size={12} /></button>}
+                          {(podeConfigSetor(setor) || podeConfigSub(sys)) && <button onClick={() => setLinkModal({ tipo: 'categoria', target: sys })} className="icon-btn" title="Link de registro"><Link2 size={12} /></button>}
                           {isAdmin && <>
                             <button onClick={() => openModal('edit_name', 'systems', sys)} className="icon-btn" title="Editar Nome"><Pencil size={12} /></button>
                             <button onClick={() => openModal('manage_resps', 'systems', sys)} className="icon-btn" title="Responsáveis"><UserPlus size={12} /></button>

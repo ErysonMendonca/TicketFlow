@@ -24,6 +24,12 @@ export async function POST(request) {
     // Escrever em setores/systems: só admin — EXCEÇÃO: quem lidera pode editar campos de configuração
     // (`colunas` do Kanban e `auto_pool`) do setor/sub-setor que lidera.
     if (['setores', 'systems'].includes(table) && action !== 'select' && !admin) {
+      // EXCEÇÃO: o GERENTE cria SUB-SETOR (system) no PRÓPRIO setor (insert com setor_id = o setor dele).
+      const linhas = data ? (Array.isArray(data) ? data : [data]) : [];
+      const gerenteCriaSubNoSeuSetor = table === 'systems' && action === 'insert'
+        && usuario.role === 'gerente' && usuario.setor_id != null
+        && linhas.length > 0 && linhas.every(d => String(d.setor_id) === String(usuario.setor_id));
+      if (!gerenteCriaSubNoSeuSetor) {
       const alvoId = filters.find(f => f.type === 'eq' && f.col === 'id')?.val;
       const campos = data ? Object.keys(data) : [];
       const permitidos = ['colunas', 'auto_pool'];
@@ -38,6 +44,7 @@ export async function POST(request) {
         ? (usuario.role === 'gerente' && String(usuario.setor_id) === String(alvoId))
         : (usuario.role === 'responsavel_subsetor' && String(usuario.system_id) === String(alvoId));
       if (!noPrimary && !porCargo) return semPermissao();
+      }
     }
     // Escrever em users: só admin — exceto (a) a PRÓPRIA linha (is_online / perfil)
     // ou (b) o RESPONSÁVEL editando a LOTAÇÃO (system_id/system_ids) de um funcionário que ele lidera.

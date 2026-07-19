@@ -2894,6 +2894,7 @@ function ChatInboxPage({ conversas = [], user, allUsers = [], setores = [], syst
     if (user?.id === t.created_by) return allUsers.find(u => u.name === t.responsible) || { name: t.responsible || '—' };
     return allUsers.find(u => u.id === t.created_by) || { name: '—' };
   };
+  const criadorNome = (t) => allUsers.find(u => u.id === t.created_by)?.name || '—'; // quem abriu o ticket
 
   // ordena por última atividade (msg mais recente primeiro; sem msg vai pelo id desc)
   const ordenadas = [...conversas].sort((a, b) => {
@@ -2941,11 +2942,11 @@ function ChatInboxPage({ conversas = [], user, allUsers = [], setores = [], syst
                 <div style={{ width: '40px', height: '40px', flexShrink: 0, borderRadius: '50%', background: 'var(--primary)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '0.9rem' }}>{getInitials(o.name)}</div>
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: '6px' }}>
-                    <span style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-main)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{o.name}</span>
+                    <span style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-main)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.title}</span>
                     {lastMsgByTicket[t.id] && <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', flexShrink: 0 }}>{tempoRelativo(lastMsgByTicket[t.id])}</span>}
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: '6px', alignItems: 'center' }}>
-                    <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>#{t.id} · {t.title}</span>
+                    <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>#{t.id} · {o.name}</span>
                     {un > 0 && <span style={{ flexShrink: 0, minWidth: '18px', height: '18px', padding: '0 5px', borderRadius: '999px', background: '#ef4444', color: '#fff', fontSize: '0.65rem', fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{un}</span>}
                   </div>
                 </div>
@@ -2960,13 +2961,13 @@ function ChatInboxPage({ conversas = [], user, allUsers = [], setores = [], syst
             <>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', paddingBottom: '0.75rem', borderBottom: '1px solid var(--glass-border)', marginBottom: '0.75rem', flex: '0 0 auto' }}>
                 <button className="icon-btn ci-back" onClick={() => setSelId(null)} title="Voltar"><ArrowLeft size={18} /></button>
-                <div style={{ width: '38px', height: '38px', flexShrink: 0, borderRadius: '50%', background: 'var(--primary)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800 }}>{getInitials(outroLado(sel).name)}</div>
+                <div style={{ width: '38px', height: '38px', flexShrink: 0, borderRadius: '50%', background: 'var(--primary)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800 }}>{getInitials(sel.title)}</div>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontWeight: 800, color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    {outroLado(sel).name}
-                    {!!sel.finalized && <span style={{ padding: '2px 8px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 800, textTransform: 'uppercase', background: 'rgba(100,116,139,0.15)', color: 'var(--text-muted)' }}>Arquivada</span>}
+                    <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{sel.title}</span>
+                    {!!sel.finalized && <span style={{ flexShrink: 0, padding: '2px 8px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 800, textTransform: 'uppercase', background: 'rgba(100,116,139,0.15)', color: 'var(--text-muted)' }}>Arquivada</span>}
                   </div>
-                  <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>#{sel.id} · {sel.title}</div>
+                  <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>#{sel.id} · Criado por {criadorNome(sel)}</div>
                 </div>
               </div>
               <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>

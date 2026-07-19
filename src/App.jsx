@@ -969,16 +969,16 @@ export default function App() {
     });
 
     socket.on('new_mention_alert', (data) => {
-      // Toca o som de notificação para todos os Devs/Admins
-      if (isManager(user?.role)) {
+      // Notifica a PESSOA mencionada (não mais todos os gestores)
+      if (data.toUserId === user?.id) {
         playSound('notification');
-        toast(`📍 @${data.mentioned} foi mencionado no Ticket #${data.ticketId}!`, {
+        toast(`🏷️ ${data.from || 'Alguém'} mencionou você no Ticket #${data.ticketId}`, {
           duration: 10000,
           position: 'top-center',
           icon: '🏷️',
-          style: { 
-            background: '#4f46e5', 
-            color: 'white', 
+          style: {
+            background: '#4f46e5',
+            color: 'white',
             border: '2px solid rgba(255,255,255,0.2)',
             fontWeight: '800'
           }
@@ -1219,7 +1219,7 @@ export default function App() {
   }
 
   // Conversas do usuário (bolha/inbox): tickets COM responsável em que ele é criador OU responsável.
-  const chatConversas = tickets.filter(t => t.responsible && (t.created_by === user?.id || t.responsible === user?.name));
+  const chatConversas = tickets.filter(t => t.responsible && (t.created_by === user?.id || t.responsible === user?.name || (Array.isArray(t.shared_with) && t.shared_with.includes(user?.id))));
   // Última atividade por ticket → ordena a lista de conversas (msg mais recente no topo).
   const lastMsgByTicket = {};
   for (const m of msgMeta) {
@@ -2664,7 +2664,38 @@ function TicketChat({ ticket, user, allUsers = [], fill = false }) {
   const [preview, setPreview] = useState(null); // mídia aberta em tela cheia
   const [loadedAnexos, setLoadedAnexos] = useState({}); // {msgId: [{url,type,name}]} carregados sob demanda
   const [carregandoAnx, setCarregandoAnx] = useState({}); // {msgId: true} enquanto busca a mídia
-  const canPost = user?.id === ticket.created_by || user?.name === ticket.responsible;
+  const [mencaoQuery, setMencaoQuery] = useState(null); // texto após o "@" (autocomplete); null = fechado
+
+  // Participantes da conversa = criador + responsável + compartilhados (shared_with)
+  const shared = Array.isArray(ticket.shared_with) ? ticket.shared_with : [];
+  const respId = allUsers.find(u => u.name === ticket.responsible)?.id;
+  const participantesIds = [...new Set([ticket.created_by, respId, ...shared].filter(v => v != null))];
+  const participantes = participantesIds.map(id => allUsers.find(u => u.id === id)).filter(Boolean);
+  const canPost = participantesIds.includes(user?.id);
+  // sugestões da @menção (participantes, menos eu, casando o texto após @)
+  const mencaoSugestoes = mencaoQuery == null ? []
+    : participantes.filter(u => u.id !== user?.id && u.name.toLowerCase().includes(mencaoQuery.toLowerCase())).slice(0, 6);
+  const onChangeMsg = (e) => {
+    const v = e.target.value; setNovaMsg(v);
+    const m = v.match(/@([\wÀ-ÿ]{0,24})$/); // "@token" no fim do texto → abre o autocomplete
+    setMencaoQuery(m ? m[1] : null);
+  };
+  const escolherMencao = (u) => {
+    setNovaMsg(prev => prev.replace(/@[\wÀ-ÿ]*$/, '@' + u.name + ' '));
+    setMencaoQuery(null);
+  };
+  // Realça @Nome (de participantes) no texto da mensagem
+  const nomesParticipantes = participantes.map(p => p.name);
+  const renderMensagem = (txt) => {
+    if (!txt || !nomesParticipantes.length) return txt;
+    const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp('(@(?:' + nomesParticipantes.map(esc).join('|') + '))', 'g');
+    return txt.split(re).map((part, i) =>
+      part.startsWith('@') && nomesParticipantes.includes(part.slice(1))
+        ? <strong key={i} style={{ color: 'var(--primary)' }}>{part}</strong>
+        : <span key={i}>{part}</span>
+    );
+  };
 
   const fetchMessages = async () => {
     // NÃO puxa o base64 dos anexos aqui (um vídeo pode ter dezenas de MB e travar o chat).
@@ -2720,13 +2751,16 @@ function TicketChat({ ticket, user, allUsers = [], fill = false }) {
     setEnviando(false);
     if (error) { toast.error('Erro ao enviar mensagem.'); setNovaMsg(txt); setAnexos(anexosEnvio); return; }
     await fetchMessages();
-    // avisa o outro lado (criador ↔ responsável) — socket + e-mail (evento "nova_mensagem")
-    const destino = user.id === ticket.created_by ? allUsers.find(u => u.name === ticket.responsible)?.id : ticket.created_by;
-    socket.emit('ticket_message', { ticketId: ticket.id, from: user.name, toUserId: destino });
-    const destinoUser = allUsers.find(u => u.id === destino);
-    if (destinoUser?.email) {
+    // Notifica TODOS os outros participantes (criador + responsável + compartilhados) — socket + e-mail.
+    const outros = participantes.filter(u => u.id !== user.id);
+    outros.forEach(d => socket.emit('ticket_message', { ticketId: ticket.id, from: user.name, toUserId: d.id }));
+    // @menções: participantes citados no texto recebem alerta direcionado
+    outros.filter(u => txt.includes('@' + u.name)).forEach(u =>
+      socket.emit('mention_created', { ticketId: ticket.id, mentioned: u.name, toUserId: u.id, from: user.name }));
+    const emails = outros.map(u => u.email).filter(Boolean);
+    if (emails.length) {
       fetch('/api/notify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-        to: [destinoUser.email],
+        to: emails,
         subject: `Nova mensagem na demanda #${ticket.id}`,
         email: {
           cabecalho: 'Nova Mensagem', icone: '💬', ticketId: ticket.id,
@@ -2752,7 +2786,7 @@ function TicketChat({ ticket, user, allUsers = [], fill = false }) {
       <div className="hide-scrollbar" style={threadStyle}>
         {messages.length === 0 && (
           <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic', textAlign: 'center', padding: '0.5rem 0' }}>
-            {canPost ? 'Sem mensagens ainda. Peça ou envie detalhes abaixo.' : 'Sem mensagens ainda. Só o solicitante e o responsável conversam aqui.'}
+            {canPost ? 'Sem mensagens ainda. Peça ou envie detalhes abaixo.' : 'Sem mensagens ainda. Conversam aqui o solicitante, o responsável e quem o ticket for compartilhado.'}
           </p>
         )}
         {messages.map(m => {
@@ -2797,7 +2831,7 @@ function TicketChat({ ticket, user, allUsers = [], fill = false }) {
                   background: meu ? 'var(--primary)' : 'rgba(0,0,0,0.05)', color: meu ? 'white' : 'var(--text-main)',
                   borderTopRightRadius: meu ? '2px' : '12px', borderTopLeftRadius: meu ? '12px' : '2px'
                 }}>
-                  {m.message}
+                  {renderMensagem(m.message)}
                 </div>
               )}
             </div>
@@ -2823,6 +2857,18 @@ function TicketChat({ ticket, user, allUsers = [], fill = false }) {
               ))}
             </div>
           )}
+          {mencaoSugestoes.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginBottom: '6px', border: '1px solid var(--glass-border)', borderRadius: '10px', overflow: 'hidden', background: 'var(--surface)' }}>
+              <div style={{ fontSize: '0.62rem', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 700, padding: '6px 10px 2px' }}>Mencionar</div>
+              {mencaoSugestoes.map(u => (
+                <button key={u.id} type="button" onClick={() => escolherMencao(u)}
+                  style={{ display: 'flex', alignItems: 'center', gap: '8px', textAlign: 'left', padding: '7px 10px', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: '0.82rem', color: 'var(--text-main)' }}>
+                  <span style={{ width: '24px', height: '24px', borderRadius: '50%', background: 'var(--primary)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '0.7rem' }}>{getInitials(u.name)}</span>
+                  @{u.name}
+                </button>
+              ))}
+            </div>
+          )}
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <input type="file" id={`chat-file-${ticket.id}`} className="hidden" multiple accept="image/*,video/*" onChange={handleFiles} />
             <label htmlFor={`chat-file-${ticket.id}`} className="icon-btn" title="Anexar imagem ou vídeo" style={{ flex: '0 0 auto', cursor: 'pointer' }}>
@@ -2830,9 +2876,15 @@ function TicketChat({ ticket, user, allUsers = [], fill = false }) {
             </label>
             <input
               value={novaMsg}
-              onChange={e => setNovaMsg(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); enviarMsg(); } }}
-              placeholder="Escreva uma mensagem..."
+              onChange={onChangeMsg}
+              onKeyDown={e => {
+                if (e.key === 'Escape') { setMencaoQuery(null); return; }
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  if (mencaoSugestoes.length) escolherMencao(mencaoSugestoes[0]); else enviarMsg();
+                }
+              }}
+              placeholder="Escreva uma mensagem…  (@ para marcar alguém)"
               style={{ flex: 1, margin: 0, fontSize: '0.85rem' }}
             />
             <button className="btn btn-primary" style={{ flex: '0 0 auto' }} onClick={enviarMsg} disabled={enviando || preparandoAnexos}>
@@ -2967,7 +3019,9 @@ function ChatInboxPage({ conversas = [], user, allUsers = [], setores = [], syst
                     <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{sel.title}</span>
                     {!!sel.finalized && <span style={{ flexShrink: 0, padding: '2px 8px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 800, textTransform: 'uppercase', background: 'rgba(100,116,139,0.15)', color: 'var(--text-muted)' }}>Arquivada</span>}
                   </div>
-                  <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>#{sel.id} · Criado por {criadorNome(sel)}</div>
+                  <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    #{sel.id} · Criado por {criadorNome(sel)}{Array.isArray(sel.shared_with) && sel.shared_with.length > 0 ? ` · +${sel.shared_with.length} no chat` : ''}
+                  </div>
                 </div>
               </div>
               <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>

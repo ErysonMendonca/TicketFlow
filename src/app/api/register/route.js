@@ -9,7 +9,9 @@ export async function POST(request) {
     if (!name || !email || !password) return NextResponse.json({ error: 'Preencha nome, e-mail e senha.' }, { status: 400 });
     const senhaHash = hashSenha(password);
 
-    const role = papel === 'responsavel_subsetor' ? 'responsavel_subsetor' : 'funcionario';
+    const role = papel === 'gerente' ? 'gerente'
+      : papel === 'responsavel_subsetor' ? 'responsavel_subsetor'
+      : 'funcionario';
     const table = tipo === 'setor' ? 'setores' : 'systems';
     const [alvoRows] = await pool.query(`SELECT * FROM ${table} WHERE id = ? LIMIT 1`, [id]);
     const alvo = alvoRows[0];
@@ -28,7 +30,8 @@ export async function POST(request) {
     );
     const newId = r.insertId;
 
-    if (role === 'responsavel_subsetor' && alvo) {
+    // cargo de gestão (gerente do setor / responsável do sub-setor) entra nos primary_responsibles do alvo
+    if ((role === 'gerente' || role === 'responsavel_subsetor') && alvo) {
       let resp = alvo.primary_responsibles;
       if (typeof resp === 'string') { try { resp = JSON.parse(resp); } catch { resp = []; } }
       resp = Array.isArray(resp) ? resp : [];

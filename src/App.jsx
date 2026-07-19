@@ -448,8 +448,10 @@ function RegistroScreen({ hash }) {
   const parts = hash.replace(/^#\/?/, '').split('/'); // ['registro','setor','2','user']
   const tipo = parts[1];                 // 'setor' | 'categoria'
   const id = Number(parts[2]);
-  // atende → responsavel_subsetor; senão abre chamados → funcionario. Aceita links antigos ('dev'/'user').
-  const papel = (parts[3] === 'dev' || parts[3] === 'responsavel_subsetor') ? 'responsavel_subsetor' : 'funcionario';
+  // cargo do link: gerente | responsavel_subsetor | funcionario (aceita legado 'dev'/'user').
+  const papel = parts[3] === 'gerente' ? 'gerente'
+    : (parts[3] === 'dev' || parts[3] === 'responsavel_subsetor') ? 'responsavel_subsetor'
+    : 'funcionario';
   const responsavelId = Number(parts[4]) || null; // quem gerou o link = responsável (links antigos não têm)
 
   const [target, setTarget] = useState(null);
@@ -524,7 +526,7 @@ function RegistroScreen({ hash }) {
     return (
       <>
         <p className="tt-reg-sub">
-          {tipo === 'categoria' ? 'Sub-Setor' : 'Setor'}: <strong>{target.name}</strong> · {papel === 'responsavel_subsetor' ? 'atende os chamados' : 'abre chamados'}
+          {tipo === 'categoria' ? 'Sub-Setor' : 'Setor'}: <strong>{target.name}</strong> · {papel === 'gerente' ? 'gerente do setor' : papel === 'responsavel_subsetor' ? 'responsável do sub-setor' : 'abre chamados'}
         </p>
         <form className="tt-form" onSubmit={handleSubmit}>
           <div className="tt-field">
@@ -621,7 +623,7 @@ function RegistroScreen({ hash }) {
 function RegistroLinkModal({ tipo, target, criador, systems = [], onClose }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
-  const [papel, setPapel] = useState('funcionario');
+  const [papel, setPapel] = useState('funcionario'); // 'gestor' | 'funcionario' (role real derivado do destino)
   // destino: 'setor:<id>' | 'sub:<id>' — só faz sentido quando o alvo é um setor
   const subsDoSetor = tipo === 'setor' ? systems.filter(s => String(s.setor_id) === String(target.id)) : [];
   const [destino, setDestino] = useState('');
@@ -631,7 +633,17 @@ function RegistroLinkModal({ tipo, target, criador, systems = [], onClose }) {
   let effTipo = tipo, effId = target.id;
   if (tipo === 'setor' && destino.startsWith('sub:')) { effTipo = 'categoria'; effId = Number(destino.slice(4)); }
 
-  const link = `${window.location.origin}/#/registro/${effTipo}/${effId}/${papel}/${criador?.id ?? ''}`;
+  // Cargo de gestão depende do destino: setor → Gerente; sub-setor → Responsável do sub-setor.
+  const gestorRole = effTipo === 'setor' ? 'gerente' : 'responsavel_subsetor';
+  const gestorLabel = effTipo === 'setor' ? 'Gerente' : 'Responsável do sub-setor';
+  const effRole = papel === 'gestor' ? gestorRole : 'funcionario';
+  const descricoes = {
+    gerente: 'Ao entrar: recebe as demandas do setor, direciona para a equipe e acompanha no Kanban os funcionários que cadastrou.',
+    responsavel_subsetor: 'Ao entrar: recebe e direciona as demandas do sub-setor e acompanha no Kanban os funcionários que cadastrou.',
+    funcionario: 'Ao entrar: abre chamados e atende só as demandas direcionadas a ele (ou abertas ao setor para puxar).',
+  };
+
+  const link = `${window.location.origin}/#/registro/${effTipo}/${effId}/${effRole}/${criador?.id ?? ''}`;
   const copiar = async () => {
     try { await navigator.clipboard.writeText(link); toast.success('Link copiado!'); }
     catch { toast.error('Copie o link manualmente.'); }
@@ -661,11 +673,14 @@ function RegistroLinkModal({ tipo, target, criador, systems = [], onClose }) {
         )}
 
         <div className="form-group">
-          <label style={{ fontSize: '0.75rem' }}>Quem entrar por este link será…</label>
+          <label style={{ fontSize: '0.75rem' }}>Cargo de quem entrar por este link</label>
           <select value={papel} onChange={e => setPapel(e.target.value)}>
-            <option value="funcionario">Funcionário que abre chamados</option>
-            <option value="responsavel_subsetor">Membro que atende (vira responsável)</option>
+            <option value="gestor">{gestorLabel}</option>
+            <option value="funcionario">Funcionário</option>
           </select>
+          <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', margin: '6px 0 0', lineHeight: 1.4 }}>
+            {descricoes[effRole]}
+          </p>
         </div>
 
         {criador?.name && (

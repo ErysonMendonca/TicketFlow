@@ -1156,6 +1156,16 @@ export default function App() {
     if (!s || new Date(m.created_at) > new Date(s)) unreadByTicket[m.ticket_id] = (unreadByTicket[m.ticket_id] || 0) + 1;
   }
 
+  // Conversas do usuário (bolha/inbox): tickets COM responsável em que ele é criador OU responsável.
+  const chatConversas = tickets.filter(t => t.responsible && (t.created_by === user?.id || t.responsible === user?.name));
+  // Última atividade por ticket → ordena a lista de conversas (msg mais recente no topo).
+  const lastMsgByTicket = {};
+  for (const m of msgMeta) {
+    const cur = lastMsgByTicket[m.ticket_id];
+    if (!cur || new Date(m.created_at) > new Date(cur)) lastMsgByTicket[m.ticket_id] = m.created_at;
+  }
+  const totalUnreadChat = chatConversas.reduce((s, t) => s + (unreadByTicket[t.id] || 0), 0);
+
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('theme', theme);
@@ -1690,7 +1700,19 @@ export default function App() {
               transition={{ duration: 0.2 }}
               style={{ height: '100%', display: 'flex', flexDirection: 'column' }}
             >
-              {view === 'tickets' ? (
+              {view === 'chat' ? (
+                <ChatInboxPage
+                  conversas={chatConversas}
+                  user={user}
+                  allUsers={allUsers}
+                  setores={setoresList}
+                  systems={systemsList}
+                  unreadByTicket={unreadByTicket}
+                  lastMsgByTicket={lastMsgByTicket}
+                  onVisto={marcarVisto}
+                  onSair={() => setView('tickets')}
+                />
+              ) : view === 'tickets' ? (
                 <UserDashboard
                   tickets={enviadosTickets}
                   isLoading={loading}
@@ -1751,6 +1773,22 @@ export default function App() {
         </main>
         <AppFooter />
       </div>
+
+      {/* Bolha de conversas: em todas as telas, some quando a inbox (view 'chat') está aberta */}
+      {user && view !== 'chat' && (
+        <button
+          onClick={() => { setChatTicket(null); setViewingTicket(null); setView('chat'); playSound('open'); }}
+          title="Conversas"
+          style={{ position: 'fixed', right: '1.5rem', bottom: '1.5rem', zIndex: 1200, width: '58px', height: '58px', borderRadius: '50%', border: 'none', cursor: 'pointer', background: 'var(--primary)', color: '#fff', boxShadow: '0 8px 24px rgba(0,0,0,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        >
+          <MessageSquare size={24} />
+          {totalUnreadChat > 0 && (
+            <span style={{ position: 'absolute', top: '-4px', right: '-4px', minWidth: '22px', height: '22px', padding: '0 6px', borderRadius: '999px', background: '#ef4444', color: '#fff', fontSize: '0.72rem', fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid var(--surface)' }}>
+              {totalUnreadChat > 99 ? '99+' : totalUnreadChat}
+            </span>
+          )}
+        </button>
+      )}
 
       <AnimatePresence>
         {isModalOpen && (
@@ -2763,6 +2801,93 @@ function TicketChatPage({ ticket, user, allUsers = [], setores = [], systems = [
   );
 }
 
+// Inbox de conversas estilo WhatsApp Web: lista à esquerda, chat à direita.
+// Mobile (via CSS .chat-inbox): só a lista; ao selecionar mostra o chat com seta Voltar.
+function ChatInboxPage({ conversas = [], user, allUsers = [], setores = [], systems = [], unreadByTicket = {}, lastMsgByTicket = {}, onVisto, onSair }) {
+  const [selId, setSelId] = useState(null);
+
+  // outro participante da conversa (quem NÃO é o usuário atual)
+  const outroLado = (t) => {
+    if (user?.id === t.created_by) return allUsers.find(u => u.name === t.responsible) || { name: t.responsible || '—' };
+    return allUsers.find(u => u.id === t.created_by) || { name: '—' };
+  };
+
+  // ordena por última atividade (msg mais recente primeiro; sem msg vai pelo id desc)
+  const ordenadas = [...conversas].sort((a, b) => {
+    const ta = lastMsgByTicket[a.id], tb = lastMsgByTicket[b.id];
+    if (ta && tb) return new Date(tb) - new Date(ta);
+    if (ta) return -1; if (tb) return 1;
+    return b.id - a.id;
+  });
+
+  const sel = ordenadas.find(t => t.id === selId) || null;
+  const abrir = (t) => { setSelId(t.id); onVisto && onVisto(t.id); };
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} style={{ height: '100%', display: 'flex', flexDirection: 'column', width: '100%' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '1rem', flex: '0 0 auto' }}>
+        <button className="icon-btn" onClick={onSair} title="Fechar"><ArrowLeft size={20} /></button>
+        <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <MessageSquare size={22} color="var(--primary)" /> Conversas
+        </h2>
+      </div>
+
+      <div className={`chat-inbox${sel ? ' has-selection' : ''}`} style={{ flex: 1, minHeight: 0 }}>
+        {/* Lista de conversas */}
+        <div className="ci-list glass" style={{ padding: '0.5rem', border: '1px solid var(--glass-border)' }}>
+          {ordenadas.length === 0 && (
+            <div style={{ padding: '2rem 1rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>Nenhuma conversa ainda.</div>
+          )}
+          {ordenadas.map(t => {
+            const o = outroLado(t);
+            const un = unreadByTicket[t.id] || 0;
+            const ativo = sel?.id === t.id;
+            return (
+              <button key={t.id} onClick={() => abrir(t)}
+                style={{ width: '100%', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: '10px', border: 'none', cursor: 'pointer', background: ativo ? 'rgba(99,102,241,0.12)' : 'transparent' }}>
+                <div style={{ width: '40px', height: '40px', flexShrink: 0, borderRadius: '50%', background: 'var(--primary)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '0.9rem' }}>{getInitials(o.name)}</div>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '6px' }}>
+                    <span style={{ fontWeight: 700, fontSize: '0.9rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{o.name}</span>
+                    {lastMsgByTicket[t.id] && <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', flexShrink: 0 }}>{tempoRelativo(lastMsgByTicket[t.id])}</span>}
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '6px', alignItems: 'center' }}>
+                    <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>#{t.id} · {t.title}</span>
+                    {un > 0 && <span style={{ flexShrink: 0, minWidth: '18px', height: '18px', padding: '0 5px', borderRadius: '999px', background: '#ef4444', color: '#fff', fontSize: '0.65rem', fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{un}</span>}
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Chat da conversa selecionada (display/flex vem do CSS p/ o media query poder escondê-lo no mobile) */}
+        <div className="ci-chat glass" style={{ padding: '1rem', border: '1px solid var(--glass-border)' }}>
+          {sel ? (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', paddingBottom: '0.75rem', borderBottom: '1px solid var(--glass-border)', marginBottom: '0.75rem', flex: '0 0 auto' }}>
+                <button className="icon-btn ci-back" onClick={() => setSelId(null)} title="Voltar"><ArrowLeft size={18} /></button>
+                <div style={{ width: '38px', height: '38px', flexShrink: 0, borderRadius: '50%', background: 'var(--primary)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800 }}>{getInitials(outroLado(sel).name)}</div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontWeight: 800 }}>{outroLado(sel).name}</div>
+                  <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>#{sel.id} · {sel.title}</div>
+                </div>
+              </div>
+              <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                <TicketChat ticket={sel} user={user} allUsers={allUsers} fill />
+              </div>
+            </>
+          ) : (
+            <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '0.9rem', textAlign: 'center', padding: '2rem' }}>
+              Selecione uma conversa à esquerda.
+            </div>
+          )}
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
 // --- Acompanhamento do criador: só leitura (fase, aceite e direcionamento). Sem aceitar/recusar/editar. ---
 function TicketStatusModal({ ticket, setores = [], systems = [], user, allUsers = [], onClose, onOpenChat, onDelete, onVerEnvio, onFinalize, onReopen }) {
   const [mounted, setMounted] = useState(false);
@@ -2848,12 +2973,7 @@ function TicketStatusModal({ ticket, setores = [], systems = [], user, allUsers 
           <AlignLeft size={16} /> Ver o que foi enviado
         </button>
 
-        {/* Conversa só existe depois que alguém ACEITA (há responsável); em backlog não aparece */}
-        {donoVisivel(ticket) && (
-          <button className="btn btn-primary" style={{ width: '100%', marginTop: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }} onClick={() => onOpenChat(ticket)}>
-            <MessageSquare size={16} /> Abrir conversa com o responsável
-          </button>
-        )}
+        {/* A conversa agora vive na bolha de Conversas (canto inferior direito), não mais aqui no ticket. */}
 
         {podeExcluir && (
           <button className="btn btn-ghost" style={{ width: '100%', marginTop: '0.75rem', color: '#ef4444', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }} onClick={() => onDelete && onDelete(ticket)}>
@@ -3492,16 +3612,8 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, setores = [], 
                   )}
                 </div>
 
-                {/* Rodapé fixo: acessar chat + ação primária, sempre visíveis */}
+                {/* Rodapé fixo: ação primária (o chat foi p/ a bolha de Conversas). */}
                 <div style={{ flexShrink: 0, paddingTop: '1rem', marginTop: '0.75rem', borderTop: '1px solid var(--glass-border)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {onOpenChat && (
-                    <button className="btn btn-ghost" style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', position: 'relative' }} onClick={onOpenChat}>
-                      <MessageSquare size={16} /> Acessar Chat
-                      {unread > 0 && (
-                        <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: '20px', height: '20px', padding: '0 6px', borderRadius: '999px', background: '#4f46e5', color: '#fff', fontSize: '0.7rem', fontWeight: 800 }}>{unread}</span>
-                      )}
-                    </button>
-                  )}
                   <button className="btn btn-primary" style={{ width: '100%' }} onClick={() => {
                     // Definiu tipo + prazo enquanto em Backlog/Análise → avança para Resolvendo
                     let finalStatus = statusSel;

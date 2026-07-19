@@ -42,6 +42,7 @@ async function run() {
       ['users', 'system_ids', 'ALTER TABLE users ADD COLUMN system_ids JSON NULL AFTER system_id'],
       ['users', 'responsavel_id', 'ALTER TABLE users ADD COLUMN responsavel_id INT NULL AFTER system_ids'],
       ['users', 'blocked', 'ALTER TABLE users ADD COLUMN blocked TINYINT DEFAULT 0 AFTER responsavel_id'],
+      ['users', 'setor_ids', 'ALTER TABLE users ADD COLUMN setor_ids JSON NULL AFTER setor_id'],
     ];
     for (const [tbl, col, sql] of colunas) {
       if (await colunaExiste(conn, tbl, col)) { console.log(`   coluna ${tbl}.${col}: já existe ✓`); continue; }

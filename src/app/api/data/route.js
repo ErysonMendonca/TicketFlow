@@ -52,15 +52,17 @@ export async function POST(request) {
       const alvo = filters.find(f => f.type === 'eq' && f.col === 'id')?.val;
       if (String(alvo) !== String(usuario.id)) {
         const campos = data ? Object.keys(data) : [];
-        const permitidos = ['system_id', 'system_ids', 'blocked']; // remaneja sub-setor + bloqueia acesso; nunca role/senha/email
-        const soLotacao = action === 'update' && campos.length > 0 && campos.every(c => permitidos.includes(c));
+        // O líder gerencia o afiliado: cargo, setores em que atua, bloqueio e senha. NUNCA email; NUNCA role admin.
+        const permitidos = ['system_id', 'system_ids', 'setor_id', 'setor_ids', 'role', 'blocked', 'password'];
+        const soPermitidos = action === 'update' && campos.length > 0 && campos.every(c => permitidos.includes(c));
+        const roleOk = data?.role == null || ['funcionario', 'gerente', 'responsavel_subsetor'].includes(data.role);
         let lidera = false;
-        if (soLotacao && alvo != null && ['gerente', 'responsavel_subsetor'].includes(usuario.role)) {
+        if (soPermitidos && roleOk && alvo != null && ['gerente', 'responsavel_subsetor'].includes(usuario.role)) {
           const [tRows] = await pool.query('SELECT responsavel_id FROM users WHERE id = ? LIMIT 1', [alvo]);
           lidera = tRows[0] && String(tRows[0].responsavel_id) === String(usuario.id);
         }
-        // ponytail: valida só o vínculo responsavel_id, não se o sub-setor está no escopo do líder;
-        // a UI só oferece sub-setores do líder e a visibilidade é client-side (como o resto do app).
+        // ponytail: valida o vínculo responsavel_id + o role permitido; não checa se cada setor está no escopo
+        // do líder (a UI só oferece os do líder; a visibilidade é client-side como o resto do app).
         if (!lidera) return semPermissao();
       }
     }

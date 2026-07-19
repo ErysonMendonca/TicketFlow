@@ -1,6 +1,6 @@
 // Self-check da regra de visibilidade. Rodar: node src/lib/visibility.test.mjs
 import assert from 'node:assert';
-import { canSeeTicket, leadSetorIds, leadSystemIds, colaboradoresDoSetor, podeAtribuir, isColaboradorDoSetor, userSystemIds, noSetor, afiliadosDe } from './visibility.js';
+import { canSeeTicket, leadSetorIds, leadSystemIds, colaboradoresDoSetor, podeAtribuir, isColaboradorDoSetor, userSystemIds, userSetorIds, noSetor, afiliadosDe } from './visibility.js';
 
 const setores = [{ id: 1, primary_responsibles: [10] }, { id: 2, primary_responsibles: [20] }];
 const systems = [{ id: 100, setor_id: 1, primary_responsibles: [30] }];
@@ -92,5 +92,14 @@ const respAfil = { id: 62, role: 'funcionario', name: 'RA62', responsavel_id: 30
 const usersR = [respSub, respAfil, outro];
 assert.equal(canSeeTicket({ setor_id: 1, platform: '100', responsible: 'RA62', created_by: 999, shared_with: [] }, respSub, setores, systems, true, usersR), true);
 assert.equal(canSeeTicket({ setor_id: 1, platform: '100', responsible: 'OU61', created_by: 999, shared_with: [] }, respSub, setores, systems, true, usersR), false);
+
+// --- Membro que atua em VÁRIOS setores (setor_id ∪ setor_ids) ---
+const multiSetor = { id: 70, role: 'funcionario', name: 'MS70', setor_id: 1, setor_ids: [2] };
+assert.deepEqual(userSetorIds(multiSetor).sort(), ['1', '2']);
+assert.equal(noSetor(multiSetor, 1, systems2), true);  // principal
+assert.equal(noSetor(multiSetor, 2, systems2), true);  // extra
+assert.equal(noSetor(multiSetor, 3, systems2), false);
+// vê open_pool dos dois setores
+assert.equal(canSeeTicket({ setor_id: 2, platform: null, created_by: 999, shared_with: [], open_pool: 1 }, multiSetor, setores, systems2), true);
 
 console.log('visibility.test: OK');

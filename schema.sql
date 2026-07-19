@@ -10,7 +10,8 @@ CREATE TABLE IF NOT EXISTS users (
     role VARCHAR(50) NOT NULL DEFAULT 'funcionario', -- admin, gerente, responsavel_setor, responsavel_subsetor, funcionario
     avatar VARCHAR(500),
     is_online BOOLEAN DEFAULT FALSE,
-    setor_id INT NULL, -- setor ao qual o usuário pertence (origem dos tickets que ele abre)
+    setor_id INT NULL, -- setor PRINCIPAL ao qual o usuário pertence (origem dos tickets que ele abre)
+    setor_ids JSON NULL, -- setores EXTRAS onde o membro também atua; visibilidade de setor = setor_id ∪ setor_ids
     system_id INT NULL, -- sub-setor (system) PRINCIPAL do funcionário/colaborador (um nível abaixo do setor)
     system_ids JSON NULL, -- sub-setores EXTRAS onde o funcionário também trabalha (além do principal); visibilidade = system_id ∪ system_ids
     responsavel_id INT NULL, -- quem é o RESPONSÁVEL deste usuário (gerente/resp. que criou o link de cadastro)

@@ -4033,26 +4033,11 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
   const meusSetorIds = leadSetorIds(user, setores);
   const meusSystemIds = leadSystemIds(user, systems);
   const minhaEquipe = dbUsers.filter(u => u.responsavel_id != null && String(u.responsavel_id) === String(user?.id));
-  const subsAtribuiveis = systems.filter(sy => meusSetorIds.includes(sy.setor_id) || meusSystemIds.includes(sy.id));
+  // setores que o líder pode atribuir ao membro: os que ele lidera + os que contêm um sub-setor dele
+  const setoresAtribuiveis = setores.filter(s => meusSetorIds.includes(s.id) || systems.some(sy => sy.setor_id === s.id && meusSystemIds.includes(sy.id)));
   const linhas = isAdmin ? dbUsers : minhaEquipe; // admin vê todos; gerente/resp vê só a equipe dele
-  // ponytail: só remaneja system_id/system_ids/blocked (o servidor só libera esses p/ o líder do afiliado)
-  const setPrincipal = async (u, sysId) => {
-    try {
-      const { error } = await api.from('users').update({ system_id: sysId ? Number(sysId) : null }).eq('id', u.id);
-      if (error) throw error;
-      toast.success('Sub-setor principal atualizado.');
-      parentFetchUsers();
-    } catch (e) { toast.error('Erro ao mover: ' + (e.message || '')); }
-  };
-  const toggleExtra = async (u, sysId) => {
-    const cur = (Array.isArray(u.system_ids) ? u.system_ids : []).map(String).filter(x => x !== String(u.system_id));
-    const next = cur.includes(String(sysId)) ? cur.filter(x => x !== String(sysId)) : [...cur, String(sysId)];
-    try {
-      const { error } = await api.from('users').update({ system_ids: next.map(Number) }).eq('id', u.id);
-      if (error) throw error;
-      parentFetchUsers();
-    } catch (e) { toast.error('Erro ao atualizar sub-setores: ' + (e.message || '')); }
-  };
+  const [membroEdit, setMembroEdit] = useState(null); // membro sendo editado pelo líder (cargo/setores/senha)
+
   const toggleBloqueio = async (u) => {
     try {
       const { error } = await api.from('users').update({ blocked: u.blocked ? 0 : 1 }).eq('id', u.id);
@@ -4060,6 +4045,19 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
       toast.success(u.blocked ? 'Acesso liberado.' : 'Acesso bloqueado.');
       parentFetchUsers();
     } catch (e) { toast.error('Erro ao atualizar acesso: ' + (e.message || '')); }
+  };
+  // Salva cargo + setores em que atua + (opcional) senha do membro liderado
+  const salvarMembro = async ({ role, setorIds, password }) => {
+    const setor_ids = (setorIds || []).map(Number);
+    const payload = { role, setor_ids, setor_id: setor_ids[0] ?? null };
+    if (password) payload.password = password;
+    try {
+      const { error } = await api.from('users').update(payload).eq('id', membroEdit.id);
+      if (error) throw error;
+      toast.success('Membro atualizado!');
+      setMembroEdit(null);
+      parentFetchUsers();
+    } catch (e) { toast.error('Erro ao salvar: ' + (e.message || '')); }
   };
 
   const [loading, setLoading] = useState(false);
@@ -4124,7 +4122,7 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
           <h2 style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '1.75rem', fontWeight: '800' }}>
             <Users color="var(--primary)" size={28} /> Gestão de Equipe
           </h2>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginTop: '4px' }}>{isAdmin ? 'Gerencie permissões e visualize o status dos membros.' : 'Gerencie os funcionários que você cadastrou: sub-setor, acesso e lotação.'}</p>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginTop: '4px' }}>{isAdmin ? 'Gerencie permissões e visualize o status dos membros.' : 'Gerencie os funcionários que você cadastrou: cargo, setores e acesso.'}</p>
         </div>
         {user?.role === 'admin' && (
           <button className="btn btn-primary" onClick={() => { setNovoSetorId(''); setIsNewUserModalOpen(true); }}>
@@ -4217,32 +4215,10 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
                         </button>
                       </div>
                     ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-end' }}>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem' }}>
-                          Sub-setor:
-                          <select value={u.system_id ?? ''} onChange={e => setPrincipal(u, e.target.value)} style={{ margin: 0 }}>
-                            <option value="">— (só setor)</option>
-                            {subsAtribuiveis.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                          </select>
-                        </label>
-                        {subsAtribuiveis.filter(s => String(s.id) !== String(u.system_id)).length > 0 && (
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', justifyContent: 'flex-end', maxWidth: '280px' }}>
-                            {subsAtribuiveis.filter(s => String(s.id) !== String(u.system_id)).map(s => {
-                              const on = (Array.isArray(u.system_ids) ? u.system_ids : []).map(String).includes(String(s.id));
-                              return (
-                                <button key={s.id} type="button" onClick={() => toggleExtra(u, s.id)}
-                                  style={{ padding: '3px 9px', borderRadius: '999px', fontSize: '0.68rem', fontWeight: 700, cursor: 'pointer',
-                                    border: `1px solid ${on ? 'var(--primary)' : 'var(--glass-border)'}`,
-                                    background: on ? 'rgba(99,102,241,0.12)' : 'transparent',
-                                    color: on ? 'var(--primary)' : 'var(--text-muted)' }}>
-                                  {on ? '✓ ' : ''}{s.name}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        )}
+                      <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', alignItems: 'center' }}>
+                        <button className="icon-btn" onClick={() => setMembroEdit(u)} title="Editar cargo / setores / senha"><Pencil size={16} /></button>
                         <button type="button" onClick={() => toggleBloqueio(u)} title={u.blocked ? 'Liberar acesso' : 'Bloquear acesso'}
-                          style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '4px 10px', borderRadius: '8px', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer',
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '6px 10px', borderRadius: '8px', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer',
                             border: `1px solid ${u.blocked ? '#10b98155' : '#ef444455'}`,
                             background: u.blocked ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
                             color: u.blocked ? '#10b981' : '#ef4444' }}>
@@ -4332,7 +4308,76 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
         </div>,
         document.body
       )}
+      {membroEdit && (
+        <MembroEditModal member={membroEdit} setoresAtribuiveis={setoresAtribuiveis} onClose={() => setMembroEdit(null)} onSave={salvarMembro} />
+      )}
     </div>
+  );
+}
+
+// Modal do líder p/ editar um membro da equipe: cargo, setores em que atua e senha.
+function MembroEditModal({ member, setoresAtribuiveis = [], onClose, onSave }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const iniciais = [member.setor_id, ...(Array.isArray(member.setor_ids) ? member.setor_ids : [])].filter(v => v != null).map(String);
+  const [role, setRole] = useState(member.role || 'funcionario');
+  const [setorIds, setSetorIds] = useState(new Set(iniciais));
+  const [password, setPassword] = useState('');
+  const [showPass, setShowPass] = useState(false);
+  if (!mounted) return null;
+  const toggle = (id) => setSetorIds(prev => { const n = new Set(prev); n.has(String(id)) ? n.delete(String(id)) : n.add(String(id)); return n; });
+  const cargos = ['funcionario', 'gerente', 'responsavel_subsetor'];
+  return createPortal(
+    <div className="overlay" style={{ alignItems: 'center', padding: '1rem' }} onClick={onClose}>
+      <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="glass modal" style={{ width: '440px', maxWidth: '94vw', padding: '1.75rem' }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.25rem' }}>
+          <div>
+            <span style={{ fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 800, letterSpacing: '0.05em' }}>Editar membro</span>
+            <h3 style={{ margin: '2px 0 0', fontSize: '1.2rem', fontWeight: 800 }}>{member.name}</h3>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={20} /></button>
+        </div>
+
+        <div className="form-group">
+          <label style={{ fontSize: '0.75rem' }}>Cargo</label>
+          <select value={role} onChange={e => setRole(e.target.value)}>
+            {cargos.map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
+          </select>
+        </div>
+
+        <div className="form-group" style={{ marginTop: '1rem' }}>
+          <label style={{ fontSize: '0.75rem' }}>Setores em que atua</label>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px' }}>
+            {setoresAtribuiveis.length === 0 && <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>Nenhum setor disponível.</span>}
+            {setoresAtribuiveis.map(s => {
+              const on = setorIds.has(String(s.id));
+              return (
+                <button key={s.id} type="button" onClick={() => toggle(s.id)}
+                  style={{ padding: '5px 12px', borderRadius: '999px', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer',
+                    border: `1px solid ${on ? 'var(--primary)' : 'var(--glass-border)'}`,
+                    background: on ? 'rgba(99,102,241,0.12)' : 'transparent',
+                    color: on ? 'var(--primary)' : 'var(--text-muted)' }}>
+                  {on ? '✓ ' : ''}{s.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="form-group" style={{ marginTop: '1rem' }}>
+          <label style={{ fontSize: '0.75rem' }}>Nova senha <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(deixe em branco para manter)</span></label>
+          <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
+            <input type={showPass ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" style={{ flex: 1, margin: 0 }} />
+            <button type="button" className="btn btn-ghost" style={{ flex: '0 0 auto' }} onClick={() => setShowPass(v => !v)}>{showPass ? 'Ocultar' : 'Mostrar'}</button>
+          </div>
+        </div>
+
+        <button className="btn btn-primary" style={{ width: '100%', marginTop: '1.5rem' }} onClick={() => onSave({ role, setorIds: [...setorIds], password: password.trim() })}>
+          Salvar
+        </button>
+      </motion.div>
+    </div>,
+    document.body
   );
 }
 

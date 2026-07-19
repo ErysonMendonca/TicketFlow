@@ -20,6 +20,14 @@ export function userSystemIds(user) {
   return [...new Set(ids.map(String))];
 }
 
+// setores em que o usuário atua: principal (setor_id) ∪ extras (setor_ids)
+export function userSetorIds(user) {
+  if (!user) return [];
+  const ids = [...arr(user.setor_ids)];
+  if (user.setor_id != null) ids.push(user.setor_id);
+  return [...new Set(ids.map(String))];
+}
+
 // setores que o usuário lidera (responsável explícito OU gerente lotado no setor)
 export function leadSetorIds(user, setoresList = []) {
   if (!user) return [];
@@ -69,10 +77,10 @@ export function isColaboradorDoSetor(user, setorId, setoresList = [], systemsLis
   return !!user && colaboradoresDoSetor(setorId, setoresList, systemsList).includes(user.id);
 }
 
-// O usuário é do setor? (lotado direto no setor OU num sub-setor dele — principal ou extra) — sem depender de allUsers.
+// O usuário é do setor? (atua nele — principal/extra — OU num sub-setor dele) — sem depender de allUsers.
 export function noSetor(user, setorId, systemsList = []) {
   if (!user || setorId == null) return false;
-  if (String(user.setor_id) === String(setorId)) return true;
+  if (userSetorIds(user).includes(String(setorId))) return true;   // setor principal ou extra
   const meus = new Set(userSystemIds(user));
   return arr(systemsList).some(s => meus.has(String(s.id)) && String(s.setor_id) === String(setorId));
 }

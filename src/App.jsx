@@ -4022,68 +4022,6 @@ function AnalyticsDashboard({ tickets, setores = [], user }) {
 }
 
 // --- Views Administrativas ---
-// Painel "Minha equipe": gerente/responsável gerencia os funcionários que cadastrou
-// (define o sub-setor principal, marca sub-setores extras e bloqueia/libera o acesso).
-function MinhaEquipePanel({ minhaEquipe = [], subsAtribuiveis = [], setPrincipal, toggleExtra, toggleBloqueio }) {
-  if (minhaEquipe.length === 0) {
-    return (
-      <div className="glass" style={{ padding: '2.5rem 1.5rem', textAlign: 'center', color: 'var(--text-muted)', border: '1px solid var(--glass-border)' }}>
-        Você ainda não cadastrou nenhum funcionário. Gere um <strong>link de registro</strong> no menu <strong>Setores</strong> e compartilhe.
-      </div>
-    );
-  }
-  return (
-    <div className="glass" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-      {minhaEquipe.map(u => {
-        const extras = (Array.isArray(u.system_ids) ? u.system_ids : []).map(String).filter(x => x !== String(u.system_id));
-        return (
-          <div key={u.id} style={{ padding: '0.9rem', border: `1px solid ${u.blocked ? '#ef444455' : 'var(--glass-border)'}`, borderRadius: '12px', display: 'flex', flexDirection: 'column', gap: '0.6rem', opacity: u.blocked ? 0.72 : 1 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-              <span style={{ fontWeight: 700 }}>
-                {u.name} <span style={{ fontWeight: 500, color: 'var(--text-muted)', fontSize: '0.8rem' }}>· {ROLE_LABELS[u.role]}</span>
-                {u.blocked ? <span style={{ marginLeft: '8px', padding: '2px 8px', borderRadius: '999px', fontSize: '0.62rem', fontWeight: 800, textTransform: 'uppercase', background: 'rgba(239,68,68,0.15)', color: '#ef4444' }}>Bloqueado</span> : null}
-              </span>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem' }}>
-                  Principal:
-                  <select value={u.system_id ?? ''} onChange={e => setPrincipal(u, e.target.value)} style={{ margin: 0 }}>
-                    <option value="">— (só setor)</option>
-                    {subsAtribuiveis.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select>
-                </label>
-                <button type="button" onClick={() => toggleBloqueio(u)} title={u.blocked ? 'Liberar acesso' : 'Bloquear acesso'}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '4px 10px', borderRadius: '8px', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer',
-                    border: `1px solid ${u.blocked ? '#10b98155' : '#ef444455'}`,
-                    background: u.blocked ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
-                    color: u.blocked ? '#10b981' : '#ef4444' }}>
-                  <Lock size={13} /> {u.blocked ? 'Desbloquear' : 'Bloquear'}
-                </button>
-              </div>
-            </div>
-            {subsAtribuiveis.filter(s => String(s.id) !== String(u.system_id)).length > 0 && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' }}>
-                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Também atua em:</span>
-                {subsAtribuiveis.filter(s => String(s.id) !== String(u.system_id)).map(s => {
-                  const on = extras.includes(String(s.id));
-                  return (
-                    <button key={s.id} type="button" onClick={() => toggleExtra(u, s.id)}
-                      style={{ padding: '3px 10px', borderRadius: '999px', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer',
-                        border: `1px solid ${on ? 'var(--primary)' : 'var(--glass-border)'}`,
-                        background: on ? 'rgba(99,102,241,0.12)' : 'transparent',
-                        color: on ? 'var(--primary)' : 'var(--text-muted)' }}>
-                      {on ? '✓ ' : ''}{s.name}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers, setores = [], systems = [] }) {
   const setorNome = (id) => setores.find(s => s.id == id)?.name || '';
   const subSetorNome = (id) => systems.find(s => s.id == id)?.name || '';
@@ -4096,6 +4034,7 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
   const meusSystemIds = leadSystemIds(user, systems);
   const minhaEquipe = dbUsers.filter(u => u.responsavel_id != null && String(u.responsavel_id) === String(user?.id));
   const subsAtribuiveis = systems.filter(sy => meusSetorIds.includes(sy.setor_id) || meusSystemIds.includes(sy.id));
+  const linhas = isAdmin ? dbUsers : minhaEquipe; // admin vê todos; gerente/resp vê só a equipe dele
   // ponytail: só remaneja system_id/system_ids/blocked (o servidor só libera esses p/ o líder do afiliado)
   const setPrincipal = async (u, sysId) => {
     try {
@@ -4194,9 +4133,6 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
         )}
       </div>
 
-      {!isAdmin ? (
-        <MinhaEquipePanel minhaEquipe={minhaEquipe} subsAtribuiveis={subsAtribuiveis} setPrincipal={setPrincipal} toggleExtra={toggleExtra} toggleBloqueio={toggleBloqueio} />
-      ) : (
       <div className="glass" style={{ padding: 0, overflow: 'hidden', border: '1px solid var(--glass-border)' }}>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
@@ -4206,11 +4142,16 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
                 <th style={{ padding: '1.25rem', fontSize: '0.75rem', fontWeight: '800', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Cargo</th>
                 <th style={{ padding: '1.25rem', fontSize: '0.75rem', fontWeight: '800', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Responsável</th>
                 <th style={{ padding: '1.25rem', fontSize: '0.75rem', fontWeight: '800', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Status</th>
-                {user?.role === 'admin' && <th style={{ padding: '1.25rem', textAlign: 'right' }}>Ação</th>}
+                <th style={{ padding: '1.25rem', textAlign: 'right' }}>{isAdmin ? 'Ação' : 'Gerenciar'}</th>
               </tr>
             </thead>
             <tbody>
-              {dbUsers.map(u => (
+              {!isAdmin && linhas.length === 0 && (
+                <tr><td colSpan={5} style={{ padding: '2.5rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                  Você ainda não cadastrou nenhum funcionário. Gere um <strong>link de registro</strong> no menu <strong>Setores</strong>.
+                </td></tr>
+              )}
+              {linhas.map(u => (
                 <tr key={u.id} className="table-row-hover" style={{ borderBottom: '1px solid var(--glass-border)' }}>
                   <td style={{ padding: '1.25rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
@@ -4265,8 +4206,8 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
                       {u.blocked ? <span style={{ padding: '2px 8px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 800, textTransform: 'uppercase', background: 'rgba(239,68,68,0.15)', color: '#ef4444' }}>Bloqueado</span> : null}
                     </div>
                   </td>
-                  {user?.role === 'admin' && (
-                    <td style={{ padding: '1.25rem', textAlign: 'right' }}>
+                  <td style={{ padding: '1.25rem', textAlign: 'right' }}>
+                    {isAdmin ? (
                       <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
                         <button className="icon-btn" onClick={() => { setEditingUser(u); setEditSetorId(u.setor_id ?? ''); setIsEditUserModalOpen(true); playSound('click'); }} title="Editar Dados">
                           <Pencil size={16} />
@@ -4275,15 +4216,47 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
                           <Trash2 size={16} />
                         </button>
                       </div>
-                    </td>
-                  )}
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-end' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem' }}>
+                          Sub-setor:
+                          <select value={u.system_id ?? ''} onChange={e => setPrincipal(u, e.target.value)} style={{ margin: 0 }}>
+                            <option value="">— (só setor)</option>
+                            {subsAtribuiveis.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                          </select>
+                        </label>
+                        {subsAtribuiveis.filter(s => String(s.id) !== String(u.system_id)).length > 0 && (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', justifyContent: 'flex-end', maxWidth: '280px' }}>
+                            {subsAtribuiveis.filter(s => String(s.id) !== String(u.system_id)).map(s => {
+                              const on = (Array.isArray(u.system_ids) ? u.system_ids : []).map(String).includes(String(s.id));
+                              return (
+                                <button key={s.id} type="button" onClick={() => toggleExtra(u, s.id)}
+                                  style={{ padding: '3px 9px', borderRadius: '999px', fontSize: '0.68rem', fontWeight: 700, cursor: 'pointer',
+                                    border: `1px solid ${on ? 'var(--primary)' : 'var(--glass-border)'}`,
+                                    background: on ? 'rgba(99,102,241,0.12)' : 'transparent',
+                                    color: on ? 'var(--primary)' : 'var(--text-muted)' }}>
+                                  {on ? '✓ ' : ''}{s.name}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                        <button type="button" onClick={() => toggleBloqueio(u)} title={u.blocked ? 'Liberar acesso' : 'Bloquear acesso'}
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '4px 10px', borderRadius: '8px', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer',
+                            border: `1px solid ${u.blocked ? '#10b98155' : '#ef444455'}`,
+                            background: u.blocked ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
+                            color: u.blocked ? '#10b981' : '#ef4444' }}>
+                          <Lock size={13} /> {u.blocked ? 'Desbloquear' : 'Bloquear'}
+                        </button>
+                      </div>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       </div>
-      )}
       {mounted && isNewUserModalOpen && createPortal(
         <div className="overlay" onClick={() => setIsNewUserModalOpen(false)}>
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="glass modal" style={{ width: '400px', padding: '2rem' }} onClick={e => e.stopPropagation()}>

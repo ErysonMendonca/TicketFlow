@@ -4035,6 +4035,8 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
   const minhaEquipe = dbUsers.filter(u => u.responsavel_id != null && String(u.responsavel_id) === String(user?.id));
   // setores que o líder pode atribuir ao membro: os que ele lidera + os que contêm um sub-setor dele
   const setoresAtribuiveis = setores.filter(s => meusSetorIds.includes(s.id) || systems.some(sy => sy.setor_id === s.id && meusSystemIds.includes(sy.id)));
+  // sub-setores atribuíveis (só o gerente coloca o membro em sub-setores do seu setor)
+  const subsAtribuiveis = systems.filter(sy => meusSetorIds.includes(sy.setor_id) || meusSystemIds.includes(sy.id));
   const linhas = isAdmin ? dbUsers : minhaEquipe; // admin vê todos; gerente/resp vê só a equipe dele
   const [membroEdit, setMembroEdit] = useState(null); // membro sendo editado pelo líder (cargo/setores/senha)
 
@@ -4046,10 +4048,15 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
       parentFetchUsers();
     } catch (e) { toast.error('Erro ao atualizar acesso: ' + (e.message || '')); }
   };
-  // Salva cargo + setores em que atua + (opcional) senha do membro liderado
-  const salvarMembro = async ({ role, setorIds, password }) => {
+  // Salva cargo + setores/sub-setores em que atua + (opcional) senha do membro liderado
+  const salvarMembro = async ({ role, setorIds, systemIds, password }) => {
     const setor_ids = (setorIds || []).map(Number);
     const payload = { role, setor_ids, setor_id: setor_ids[0] ?? null };
+    if (systemIds) { // só quando o modal ofereceu sub-setores (líder gerente)
+      const system_ids = systemIds.map(Number);
+      payload.system_ids = system_ids;
+      payload.system_id = system_ids[0] ?? null;
+    }
     if (password) payload.password = password;
     try {
       const { error } = await api.from('users').update(payload).eq('id', membroEdit.id);
@@ -4217,12 +4224,9 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
                     ) : (
                       <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', alignItems: 'center' }}>
                         <button className="icon-btn" onClick={() => setMembroEdit(u)} title="Editar cargo / setores / senha"><Pencil size={16} /></button>
-                        <button type="button" onClick={() => toggleBloqueio(u)} title={u.blocked ? 'Liberar acesso' : 'Bloquear acesso'}
-                          style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '6px 10px', borderRadius: '8px', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer',
-                            border: `1px solid ${u.blocked ? '#10b98155' : '#ef444455'}`,
-                            background: u.blocked ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
-                            color: u.blocked ? '#10b981' : '#ef4444' }}>
-                          <Lock size={13} /> {u.blocked ? 'Desbloquear' : 'Bloquear'}
+                        <button className="icon-btn" type="button" onClick={() => toggleBloqueio(u)} title={u.blocked ? 'Bloqueado — clique para liberar' : 'Bloquear acesso'}
+                          style={{ color: u.blocked ? '#ef4444' : 'var(--text-muted)' }}>
+                          <Lock size={16} />
                         </button>
                       </div>
                     )}
@@ -4309,23 +4313,26 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
         document.body
       )}
       {membroEdit && (
-        <MembroEditModal member={membroEdit} setoresAtribuiveis={setoresAtribuiveis} onClose={() => setMembroEdit(null)} onSave={salvarMembro} />
+        <MembroEditModal member={membroEdit} setoresAtribuiveis={setoresAtribuiveis} subsAtribuiveis={user?.role === 'gerente' ? subsAtribuiveis : null} onClose={() => setMembroEdit(null)} onSave={salvarMembro} />
       )}
     </div>
   );
 }
 
-// Modal do líder p/ editar um membro da equipe: cargo, setores em que atua e senha.
-function MembroEditModal({ member, setoresAtribuiveis = [], onClose, onSave }) {
+// Modal do líder p/ editar um membro da equipe: cargo, setores (e sub-setores, se o líder é gerente) e senha.
+function MembroEditModal({ member, setoresAtribuiveis = [], subsAtribuiveis = null, onClose, onSave }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
   const iniciais = [member.setor_id, ...(Array.isArray(member.setor_ids) ? member.setor_ids : [])].filter(v => v != null).map(String);
+  const iniciaisSub = [member.system_id, ...(Array.isArray(member.system_ids) ? member.system_ids : [])].filter(v => v != null).map(String);
   const [role, setRole] = useState(member.role || 'funcionario');
   const [setorIds, setSetorIds] = useState(new Set(iniciais));
+  const [systemIds, setSystemIds] = useState(new Set(iniciaisSub));
   const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
   if (!mounted) return null;
   const toggle = (id) => setSetorIds(prev => { const n = new Set(prev); n.has(String(id)) ? n.delete(String(id)) : n.add(String(id)); return n; });
+  const toggleSub = (id) => setSystemIds(prev => { const n = new Set(prev); n.has(String(id)) ? n.delete(String(id)) : n.add(String(id)); return n; });
   const cargos = ['funcionario', 'gerente', 'responsavel_subsetor'];
   return createPortal(
     <div className="overlay" style={{ alignItems: 'center', padding: '1rem' }} onClick={onClose}>
@@ -4364,6 +4371,26 @@ function MembroEditModal({ member, setoresAtribuiveis = [], onClose, onSave }) {
           </div>
         </div>
 
+        {Array.isArray(subsAtribuiveis) && subsAtribuiveis.length > 0 && (
+          <div className="form-group" style={{ marginTop: '1rem' }}>
+            <label style={{ fontSize: '0.75rem' }}>Sub-setores em que atua</label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px' }}>
+              {subsAtribuiveis.map(s => {
+                const on = systemIds.has(String(s.id));
+                return (
+                  <button key={s.id} type="button" onClick={() => toggleSub(s.id)}
+                    style={{ padding: '5px 12px', borderRadius: '999px', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer',
+                      border: `1px solid ${on ? 'var(--primary)' : 'var(--glass-border)'}`,
+                      background: on ? 'rgba(99,102,241,0.12)' : 'transparent',
+                      color: on ? 'var(--primary)' : 'var(--text-muted)' }}>
+                    {on ? '✓ ' : ''}{s.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         <div className="form-group" style={{ marginTop: '1rem' }}>
           <label style={{ fontSize: '0.75rem' }}>Nova senha <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(deixe em branco para manter)</span></label>
           <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
@@ -4372,7 +4399,7 @@ function MembroEditModal({ member, setoresAtribuiveis = [], onClose, onSave }) {
           </div>
         </div>
 
-        <button className="btn btn-primary" style={{ width: '100%', marginTop: '1.5rem' }} onClick={() => onSave({ role, setorIds: [...setorIds], password: password.trim() })}>
+        <button className="btn btn-primary" style={{ width: '100%', marginTop: '1.5rem' }} onClick={() => onSave({ role, setorIds: [...setorIds], systemIds: Array.isArray(subsAtribuiveis) ? [...systemIds] : undefined, password: password.trim() })}>
           Salvar
         </button>
       </motion.div>

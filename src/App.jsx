@@ -56,7 +56,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { api } from './lib/api';
 import toast, { Toaster } from 'react-hot-toast';
 import { PLATFORMS, DEV_STATUS, URGENCY_LEVELS, URGENCIA_MAXIMA, OTHER_STATUS, MOCK_USERS, TICKET_TYPES, ROLES, ROLE_LABELS, ROLE_COLORS, isManager, BOARD_ROLES } from './constants';
-import { canSeeTicket, colaboradoresDoSetor, podeAtribuir, isColaboradorDoSetor, leadSetorIds, leadSystemIds, noSetor } from './lib/visibility';
+import { canSeeTicket, colaboradoresDoSetor, podeAtribuir, isColaboradorDoSetor, leadSetorIds, leadSystemIds, noSetor, afiliadosDe } from './lib/visibility';
 import { io } from 'socket.io-client';
 
 // WebSocket: em produção conecta no mesmo domínio (proxy Nginx → servidor de socket);
@@ -1621,8 +1621,8 @@ export default function App() {
     if (t) { requestOpenTicket(t); window.location.hash = ''; }
   }, [hash, user, tickets]);
 
-  // Visibilidade por hierarquia (setor/sub-setor). ponytail: regra client-side, como o resto do app.
-  const visibleTickets = tickets.filter(t => canSeeTicket(t, user, setoresList, systemsList));
+  // Visibilidade por hierarquia (setor/sub-setor + afiliados diretos). ponytail: regra client-side, como o resto do app.
+  const visibleTickets = tickets.filter(t => canSeeTicket(t, user, setoresList, systemsList, true, allUsers));
 
   const filteredTickets = visibleTickets.filter(t =>
     t.title.toLowerCase().includes(search.toLowerCase()) ||
@@ -1631,7 +1631,7 @@ export default function App() {
 
   // No Kanban, quem só ENVIOU (criou, sem atender o escopo) não vê o card — continua vendo na aba Tickets.
   // (includeOwn=false: ignora o "abri este ticket"; admin/escopo/compartilhado seguem valendo)
-  const kanbanTickets = filteredTickets.filter(t => canSeeTicket(t, user, setoresList, systemsList, false));
+  const kanbanTickets = filteredTickets.filter(t => canSeeTicket(t, user, setoresList, systemsList, false, allUsers));
   const pedidosCount = kanbanTickets.filter(t => t.status === 'backlog').length; // acumulado na coluna Pedidos (badge no menu Kanban)
 
   // Aba "Ticket": admin vê TODOS; os demais veem só os que ENVIARAM (criaram). Recebidos ficam no Kanban.
@@ -1801,8 +1801,10 @@ export default function App() {
         <AcceptGateModal
           ticket={acceptGate}
           puxar={!isManager(user?.role)}
-          colaboradores={colaboradoresDoSetor(acceptGate.setor_id, setoresList, systemsList, allUsers)
-            .map(id => allUsers.find(u => u.id === id)?.name).filter(n => n && n !== user?.name)}
+          colaboradores={(user?.role === 'admin'
+            ? colaboradoresDoSetor(acceptGate.setor_id, setoresList, systemsList, allUsers).map(id => allUsers.find(u => u.id === id))
+            : afiliadosDe(user?.id, allUsers)               // gerente/resp: só direciona p/ seus afiliados diretos
+          ).map(u => u?.name).filter(n => n && n !== user?.name)}
           onAccept={() => aceitarDoGate(acceptGate)}
           onEncaminhar={(nome) => encaminharDoGate(acceptGate, nome)}
           onAbrirSetor={() => abrirSetorDoGate(acceptGate)}
@@ -3184,8 +3186,10 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, setores = [], 
   // --- Atribuição flexível da demanda ---
   const [atribuirA, setAtribuirA] = useState('');
   const canAssign = podeAtribuir(user, ticket, setores); // gerente/resp. do setor (ou admin)
-  const colaboradores = colaboradoresDoSetor(ticket.setor_id, setores, systems, allUsers)
-    .map(id => allUsers.find(u => u.id === id)).filter(Boolean);
+  // Direciona só para os AFILIADOS diretos (admin dá pra qualquer colaborador do setor)
+  const colaboradores = (user?.role === 'admin'
+    ? colaboradoresDoSetor(ticket.setor_id, setores, systems, allUsers).map(id => allUsers.find(u => u.id === id)).filter(Boolean)
+    : afiliadosDe(user?.id, allUsers));
   // resolvedor no escopo pega demanda sem dono; o líder do setor tem o botão dedicado no bloco de direcionamento
   const podePegar = !ticket.responsible && isManager(user?.role) && !podeAtribuir(user, ticket, setores);
 

@@ -6,6 +6,12 @@
 
 const arr = (v) => (Array.isArray(v) ? v : []);
 
+// afiliados DIRETOS de um líder: usuários cujo responsavel_id = leaderId (os que ele cadastrou pelo link)
+export function afiliadosDe(leaderId, allUsers = []) {
+  if (leaderId == null) return [];
+  return arr(allUsers).filter(u => u.responsavel_id != null && String(u.responsavel_id) === String(leaderId));
+}
+
 // sub-setores em que o usuário trabalha: principal (system_id) ∪ extras (system_ids)
 export function userSystemIds(user) {
   if (!user) return [];
@@ -72,18 +78,24 @@ export function noSetor(user, setorId, systemsList = []) {
 }
 
 // Um ticket é visível para o usuário? (admin tudo; funcionario só próprios/compartilhados;
-// gerente todo o setor; resp. sub-setor só o sub-setor — sempre + próprios/compartilhados)
+// gerente/resp. — dentro do escopo — veem as demandas SEM dono (a direcionar) + as atribuídas
+// aos seus AFILIADOS DIRETOS; sempre + próprios/atribuídos-a-si/compartilhados.)
 // includeOwn=false ignora o "abri este ticket" — usado no Kanban, onde quem só ENVIOU não vê o card.
-export function canSeeTicket(t, user, setoresList = [], systemsList = [], includeOwn = true) {
+// allUsers é necessário p/ resolver os afiliados (ticket.responsible é NOME) — sem ele, cai no escopo do setor.
+export function canSeeTicket(t, user, setoresList = [], systemsList = [], includeOwn = true, allUsers = []) {
   if (!user) return false;
   if (user.role === 'admin') return true;
   if (includeOwn && t.created_by === user.id) return true;       // próprios (abriu)
   if (user.name && t.responsible === user.name) return true;     // atribuído a mim (recebi a demanda)
   if (arr(t.shared_with).includes(user.id)) return true;         // compartilhados
   if (t.open_pool && noSetor(user, t.setor_id, systemsList)) return true; // demanda ABERTA ao setor → colaborador vê e pode puxar
-  if (user.role === 'gerente')
-    return leadSetorIds(user, setoresList).includes(t.setor_id); // todo o setor
-  if (user.role === 'responsavel_subsetor')                      // só o(s) sub-setor(es) que lidera
-    return leadSystemIds(user, systemsList).map(String).includes(String(t.platform));
+  if (user.role === 'gerente' || user.role === 'responsavel_subsetor') {
+    const inScope = user.role === 'gerente'
+      ? leadSetorIds(user, setoresList).includes(t.setor_id)          // escopo do gerente = seu setor
+      : leadSystemIds(user, systemsList).map(String).includes(String(t.platform)); // escopo do resp. = seu sub-setor
+    if (!inScope) return false;
+    if (!t.responsible) return true;                                    // demanda sem dono no escopo → precisa direcionar
+    return afiliadosDe(user.id, allUsers).some(a => a.name === t.responsible); // senão, só se atribuída a um afiliado direto
+  }
   return false;                                                  // funcionario: nada além de próprios/compartilhados
 }

@@ -1,6 +1,6 @@
 // Self-check da regra de visibilidade. Rodar: node src/lib/visibility.test.mjs
 import assert from 'node:assert';
-import { canSeeTicket, leadSetorIds, leadSystemIds, colaboradoresDoSetor, podeAtribuir, isColaboradorDoSetor, userSystemIds, noSetor } from './visibility.js';
+import { canSeeTicket, leadSetorIds, leadSystemIds, colaboradoresDoSetor, podeAtribuir, isColaboradorDoSetor, userSystemIds, noSetor, afiliadosDe } from './visibility.js';
 
 const setores = [{ id: 1, primary_responsibles: [10] }, { id: 2, primary_responsibles: [20] }];
 const systems = [{ id: 100, setor_id: 1, primary_responsibles: [30] }];
@@ -74,5 +74,23 @@ assert.equal(noSetor(func, 2, systems2), false);
 const tPool2 = { setor_id: 2, platform: '200', created_by: 999, shared_with: [], open_pool: 1 };
 assert.equal(canSeeTicket(tPool2, funcMulti, setores, systems2), true);
 assert.equal(canSeeTicket(tPool2, func, setores, systems2), false);
+
+// --- Kanban/direcionamento por AFILIADOS diretos (gerente/resp só veem seus afiliados + demandas a direcionar) ---
+const afil  = { id: 60, role: 'funcionario', name: 'AF60', responsavel_id: 10 };  // afiliado do gerente 10
+const outro = { id: 61, role: 'funcionario', name: 'OU61', responsavel_id: 999 }; // não é afiliado do gerente
+const usersG = [gerente, afil, outro];
+assert.deepEqual(afiliadosDe(10, usersG).map(u => u.id), [60]);
+const tGerAfil    = { setor_id: 1, platform: '100', responsible: 'AF60', created_by: 999, shared_with: [] };
+const tGerOutro   = { setor_id: 1, platform: '100', responsible: 'OU61', created_by: 999, shared_with: [] };
+const tGerSemDono = { setor_id: 1, platform: '100', responsible: null,   created_by: 999, shared_with: [] };
+assert.equal(canSeeTicket(tGerAfil,    gerente, setores, systems, true, usersG), true);  // afiliado → vê
+assert.equal(canSeeTicket(tGerOutro,   gerente, setores, systems, true, usersG), false); // não-afiliado → não vê
+assert.equal(canSeeTicket(tGerSemDono, gerente, setores, systems, true, usersG), true);  // sem dono → direciona
+assert.equal(canSeeTicket(tGerOutro,   gerente, setores, systems, false, usersG), false);// idem no board
+// resp. sub-setor: mesma regra no seu sub-setor (platform 100)
+const respAfil = { id: 62, role: 'funcionario', name: 'RA62', responsavel_id: 30 };
+const usersR = [respSub, respAfil, outro];
+assert.equal(canSeeTicket({ setor_id: 1, platform: '100', responsible: 'RA62', created_by: 999, shared_with: [] }, respSub, setores, systems, true, usersR), true);
+assert.equal(canSeeTicket({ setor_id: 1, platform: '100', responsible: 'OU61', created_by: 999, shared_with: [] }, respSub, setores, systems, true, usersR), false);
 
 console.log('visibility.test: OK');

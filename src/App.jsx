@@ -2084,7 +2084,7 @@ function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, onTi
                       </span>
                     )}
                   </div>
-                  <div style={{ display: 'flex', gap: '12px' }}>
+                  <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', rowGap: '4px' }}>
                     <div className="card-info-row">
                       <LayoutDashboard size={12} /> {ticketDestino(ticket, setores, systems)}
                     </div>

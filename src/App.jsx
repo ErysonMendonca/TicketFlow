@@ -2282,6 +2282,22 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
   const meusSubsetores = ehAdmin ? systems : systems.filter(s => leadSystemIds(user, systems).includes(s.id));
   const podeGerenciarColunas = ehAdmin || meusSetores.length > 0 || meusSubsetores.length > 0;
 
+  // --- Escopo dos filtros do Kanban por papel ---
+  const ehFunc = user?.role === 'funcionario';
+  const meuSetorIds = meusSetores.map(s => s.id);   // setores que ele lidera (admin = todos)
+  const meuSubIds = meusSubsetores.map(s => s.id);  // sub-setores que ele lidera
+  // Sub-setores no filtro: admin = todos; funcionário = só os que ele tem acesso; gerente/resp = só do seu escopo.
+  const subsFiltro = ehAdmin ? systems
+    : ehFunc ? systems.filter(sy => userSystemIds(user).includes(String(sy.id)))
+    : systems.filter(sy => meuSetorIds.includes(sy.setor_id) || meuSubIds.includes(sy.id));
+  const subIdsEscopo = new Set(subsFiltro.map(s => String(s.id)));
+  // Responsáveis no filtro: funcionário não vê; admin = todos; gerente/resp = só os do seu escopo.
+  const respsFiltro = ehAdmin ? allUsers.filter(u => isManager(u.role))
+    : allUsers.filter(u => isManager(u.role) && (
+        (u.role === 'gerente' && meuSetorIds.includes(u.setor_id)) ||
+        (u.role === 'responsavel_subsetor' && subIdsEscopo.has(String(u.system_id)))
+      ));
+
   const setorIdsBoard = new Set(visibleTickets.map(t => t.setor_id).filter(x => x != null));
   const systemIdsBoard = new Set(visibleTickets.map(t => String(t.platform)).filter(Boolean));
   const custom = [];
@@ -2353,16 +2369,18 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
         </div>
         <select style={{ flex: '0 0 160px', margin: 0 }} value={filterPlatform} onChange={e => setFilterPlatform(e.target.value)}>
           <option value="">Sub-Setores</option>
-          {systems.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          {subsFiltro.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
         <select style={{ flex: '0 0 160px', margin: 0 }} value={filterUrgency} onChange={e => setFilterUrgency(e.target.value)}>
           <option value="">Urgência</option>
           {URGENCY_LEVELS.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
         </select>
-        <select style={{ flex: '0 0 160px', margin: 0 }} value={filterResponsible} onChange={e => setFilterResponsible(e.target.value)}>
-          <option value="">Responsável</option>
-          {allUsers.filter(u => isManager(u.role)).map(u => <option key={u.id} value={u.name}>{u.name}</option>)}
-        </select>
+        {!ehFunc && (
+          <select style={{ flex: '0 0 160px', margin: 0 }} value={filterResponsible} onChange={e => setFilterResponsible(e.target.value)}>
+            <option value="">Responsável</option>
+            {respsFiltro.map(u => <option key={u.id} value={u.name}>{u.name}</option>)}
+          </select>
+        )}
         {podeGerenciarColunas && (
           <button className="btn btn-ghost" style={{ flex: '0 0 auto', margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}
             onClick={() => setNovaColuna({ alvo: '', nome: '', cor: '#6366f1' })} title="Criar coluna personalizada no seu setor/sub-setor">

@@ -2805,6 +2805,7 @@ function TicketChatPage({ ticket, user, allUsers = [], setores = [], systems = [
 // Mobile (via CSS .chat-inbox): só a lista; ao selecionar mostra o chat com seta Voltar.
 function ChatInboxPage({ conversas = [], user, allUsers = [], setores = [], systems = [], unreadByTicket = {}, lastMsgByTicket = {}, onVisto, onSair }) {
   const [selId, setSelId] = useState(null);
+  const [aba, setAba] = useState('ativas'); // 'ativas' | 'arquivadas' (ticket finalizado = arquivado)
 
   // outro participante da conversa (quem NÃO é o usuário atual)
   const outroLado = (t) => {
@@ -2820,8 +2821,14 @@ function ChatInboxPage({ conversas = [], user, allUsers = [], setores = [], syst
     return b.id - a.id;
   });
 
+  // Arquivadas = tickets finalizados; ativas = o resto.
+  const ativas = ordenadas.filter(t => !t.finalized);
+  const arquivadas = ordenadas.filter(t => !!t.finalized);
+  const visiveis = aba === 'arquivadas' ? arquivadas : ativas;
+
   const sel = ordenadas.find(t => t.id === selId) || null;
   const abrir = (t) => { setSelId(t.id); onVisto && onVisto(t.id); };
+  const tabStyle = (on) => ({ flex: 1, padding: '6px 8px', borderRadius: '8px', fontSize: '0.74rem', fontWeight: 700, cursor: 'pointer', border: `1px solid ${on ? 'var(--primary)' : 'var(--glass-border)'}`, background: on ? 'rgba(99,102,241,0.12)' : 'transparent', color: on ? 'var(--primary)' : 'var(--text-muted)' });
 
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} style={{ height: '100%', display: 'flex', flexDirection: 'column', width: '100%' }}>
@@ -2835,10 +2842,14 @@ function ChatInboxPage({ conversas = [], user, allUsers = [], setores = [], syst
       <div className={`chat-inbox${sel ? ' has-selection' : ''}`} style={{ flex: 1, minHeight: 0 }}>
         {/* Lista de conversas */}
         <div className="ci-list glass" style={{ padding: '0.5rem', border: '1px solid var(--glass-border)' }}>
-          {ordenadas.length === 0 && (
-            <div style={{ padding: '2rem 1rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>Nenhuma conversa ainda.</div>
+          <div style={{ display: 'flex', gap: '6px', marginBottom: '6px' }}>
+            <button type="button" onClick={() => setAba('ativas')} style={tabStyle(aba === 'ativas')}>Ativas{ativas.length ? ` (${ativas.length})` : ''}</button>
+            <button type="button" onClick={() => setAba('arquivadas')} style={tabStyle(aba === 'arquivadas')}>Arquivadas{arquivadas.length ? ` (${arquivadas.length})` : ''}</button>
+          </div>
+          {visiveis.length === 0 && (
+            <div style={{ padding: '2rem 1rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>{aba === 'arquivadas' ? 'Nenhuma conversa arquivada.' : 'Nenhuma conversa ativa.'}</div>
           )}
-          {ordenadas.map(t => {
+          {visiveis.map(t => {
             const o = outroLado(t);
             const un = unreadByTicket[t.id] || 0;
             const ativo = sel?.id === t.id;
@@ -2869,7 +2880,10 @@ function ChatInboxPage({ conversas = [], user, allUsers = [], setores = [], syst
                 <button className="icon-btn ci-back" onClick={() => setSelId(null)} title="Voltar"><ArrowLeft size={18} /></button>
                 <div style={{ width: '38px', height: '38px', flexShrink: 0, borderRadius: '50%', background: 'var(--primary)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800 }}>{getInitials(outroLado(sel).name)}</div>
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontWeight: 800 }}>{outroLado(sel).name}</div>
+                  <div style={{ fontWeight: 800, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {outroLado(sel).name}
+                    {!!sel.finalized && <span style={{ padding: '2px 8px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 800, textTransform: 'uppercase', background: 'rgba(100,116,139,0.15)', color: 'var(--text-muted)' }}>Arquivada</span>}
+                  </div>
                   <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>#{sel.id} · {sel.title}</div>
                 </div>
               </div>

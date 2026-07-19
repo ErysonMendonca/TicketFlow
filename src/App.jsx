@@ -4599,7 +4599,8 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
           // Membro do setor = atua no setor (principal/extra) OU num sub-setor dele (principal/extra) — considera setor_ids/system_ids
           const membros = allUsers.filter(u => userSetorIds(u).includes(String(setor.id)) || userSystemIds(u).some(sid => subIds.has(sid)));
           const gerentesSetor = membros.filter(u => u.role === 'gerente');
-          const funcsSetor = membros.filter(u => u.role === 'funcionario');
+          // "Funcionários do setor" = lotados DIRETO no setor (os de sub-setor aparecem no card do sub-setor)
+          const funcsSetor = membros.filter(u => u.role === 'funcionario' && !userSystemIds(u).some(sid => subIds.has(sid)));
           return (
             <motion.div layout key={setor.id} className="glass" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
               {/* Cabeçalho do setor: nome + GERENTE(s) à direita */}
@@ -4651,6 +4652,8 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
                     const idsResp = new Set(Array.isArray(sys.primary_responsibles) ? sys.primary_responsibles : []);
                     allUsers.forEach(u => { if (u.role === 'responsavel_subsetor' && userSystemIds(u).includes(String(sys.id))) idsResp.add(u.id); });
                     const respsSub = [...idsResp].map(id => allUsers.find(u => u.id === id)).filter(Boolean);
+                    // Funcionários que atuam neste sub-setor (principal/extra)
+                    const funcsSub = allUsers.filter(u => u.role === 'funcionario' && userSystemIds(u).includes(String(sys.id)));
                     return (
                     <div key={sys.id} style={{ padding: '1rem', borderRadius: '12px', border: '1px solid var(--glass-border)', background: 'rgba(0,0,0,0.02)', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
@@ -4677,6 +4680,15 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
                       {(podeConfigSub(sys) || !!sys.auto_pool) && (
                         <AutoPoolBtn table="systems" entity={sys} canEdit={podeConfigSub(sys)} />
                       )}
+                      {/* Funcionários do sub-setor */}
+                      <div>
+                        <div style={{ fontSize: '0.62rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', fontWeight: 700, marginBottom: '6px' }}>Funcionários</div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                          {funcsSub.length > 0
+                            ? funcsSub.map(m => <ChipMembro key={m.id} m={m} />)
+                            : <span style={{ fontStyle: 'italic', fontSize: '0.72rem', color: 'var(--text-muted)' }}>Nenhum</span>}
+                        </div>
+                      </div>
                     </div>
                     );
                   })}

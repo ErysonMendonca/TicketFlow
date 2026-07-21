@@ -95,6 +95,21 @@ export async function POST(request) {
     // Ler logs do sistema: só admin
     if (table === 'system_logs' && action === 'select' && !admin) return semPermissao();
 
+    // Abrir chamado: a ORIGEM define os destinos permitidos. Não-admin só cria ticket para os setores
+    // liberados no SEU setor de origem (sem config = nenhum). Admin abre para qualquer um. (defesa server-side
+    // do guard do cliente em addTicket — impede insert direto via API com setor_id proibido.)
+    if (table === 'tickets' && action === 'insert' && !admin) {
+      const linhas = data ? (Array.isArray(data) ? data : [data]) : [];
+      const [orgRows] = await pool.query('SELECT destinos_permitidos FROM setores WHERE id = ? LIMIT 1', [usuario.setor_id]);
+      let permitidos = [];
+      try {
+        const raw = orgRows[0]?.destinos_permitidos;
+        permitidos = (Array.isArray(raw) ? raw : (raw ? JSON.parse(raw) : [])).map(String);
+      } catch { permitidos = []; }
+      const destinosOk = linhas.length > 0 && linhas.every(d => permitidos.includes(String(d.setor_id)));
+      if (!destinosOk) return semPermissao();
+    }
+
     // Nunca gravar senha em texto puro: faz hash em qualquer escrita de users
     if (table === 'users' && ['insert', 'update', 'upsert'].includes(action) && data) {
       const items = Array.isArray(data) ? data : [data];

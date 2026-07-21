@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS setores (
     colunas JSON NULL, -- colunas de Kanban personalizadas do setor: [{id,name,color}]
     auto_pool TINYINT DEFAULT 0, -- 1 = toda demanda que chega já nasce aberta ao time (open_pool) + notifica os funcionários (config do gerente)
     origin_visibility VARCHAR(20) NOT NULL DEFAULT 'own', -- quem dos COLEGAS DE ORIGEM vê os chamados enviados por este setor: own (só o autor) | subsetor (mesmo sub-setor de origem) | setor (todo o setor de origem)
+    destinos_permitidos JSON NULL, -- array de IDs de setores para os quais ESTE setor (origem) pode abrir chamado; NULL/[] = nenhum (admin sempre pode)
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

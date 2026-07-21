@@ -2031,7 +2031,10 @@ function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, onTi
       setorNome ? `Setor: ${setorNome}` : null,
       donoVisivel(t) ? `Responsável: ${donoVisivel(t)}` : 'Aguardando aceite',
       t.delivery_date ? `Entrega: ${fmtDataPura(t.delivery_date)}` : null,
-    ].filter(Boolean);
+      '', // linha em branco antes do link
+      '👉 Abrir o detalhe do ticket:',
+      `${window.location.origin}/#/ticket/${t.id}`,
+    ].filter(l => l !== null && l !== undefined);
     window.open(`https://wa.me/?text=${encodeURIComponent(linhas.join('\n'))}`, '_blank');
   };
 
@@ -3553,7 +3556,10 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, setores = [], 
       setorDoTicket?.name ? `Setor: ${setorDoTicket.name}` : null,
       donoVisivel(ticket) ? `Responsável: ${donoVisivel(ticket)}` : 'Aguardando aceite',
       ticket.delivery_date ? `Entrega: ${fmtDataPura(ticket.delivery_date)}` : null,
-    ].filter(Boolean);
+      '', // linha em branco antes do link
+      '👉 Abrir o detalhe do ticket:',
+      `${window.location.origin}/#/ticket/${ticket.id}`,
+    ].filter(l => l !== null && l !== undefined);
     window.open(`https://wa.me/?text=${encodeURIComponent(linhas.join('\n'))}`, '_blank');
   };
 

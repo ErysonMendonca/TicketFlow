@@ -1223,15 +1223,20 @@ export default function App() {
     if (!s || new Date(m.created_at) > new Date(s)) unreadByTicket[m.ticket_id] = (unreadByTicket[m.ticket_id] || 0) + 1;
   }
 
-  // Conversas do usuário (bolha/inbox): tickets COM responsável em que ele é criador OU responsável.
-  const chatConversas = tickets.filter(t => t.responsible && (t.created_by === user?.id || t.responsible === user?.name || (Array.isArray(t.shared_with) && t.shared_with.includes(user?.id))));
-  // Última atividade por ticket → ordena a lista de conversas (msg mais recente no topo).
+  // Última atividade por ticket → ordena a lista de conversas (msg mais recente no topo) + detecta chats com mensagens.
   const lastMsgByTicket = {};
   for (const m of msgMeta) {
     const cur = lastMsgByTicket[m.ticket_id];
     if (!cur || new Date(m.created_at) > new Date(cur)) lastMsgByTicket[m.ticket_id] = m.created_at;
   }
-  const totalUnreadChat = chatConversas.reduce((s, t) => s + (unreadByTicket[t.id] || 0), 0);
+  // Sou participante da conversa? (criador, responsável ou compartilhado)
+  const souParticipanteChat = (t) => !!t.responsible && (t.created_by === user?.id || t.responsible === user?.name || (Array.isArray(t.shared_with) && t.shared_with.includes(user?.id)));
+  // Conversas do inbox. Admin visualiza TODOS os chats registrados (qualquer ticket com conversa/mensagens),
+  // em modo leitura; os demais veem só onde participam.
+  const ehAdminChat = user?.role === 'admin';
+  const chatConversas = tickets.filter(t => ehAdminChat ? (t.responsible || lastMsgByTicket[t.id]) : souParticipanteChat(t));
+  // Badge da bolha: mesmo o admin conta não-lidas só das conversas em que participa (não infla com o sistema todo).
+  const totalUnreadChat = chatConversas.reduce((s, t) => s + ((ehAdminChat && !souParticipanteChat(t)) ? 0 : (unreadByTicket[t.id] || 0)), 0);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -3003,6 +3008,9 @@ function ChatInboxPage({ conversas = [], user, allUsers = [], setores = [], syst
 
   // outro participante da conversa (quem NÃO é o usuário atual)
   const outroLado = (t) => {
+    // Admin observa de fora: mostra quem está atendendo (responsável) como contraparte.
+    if (user?.role === 'admin' && user?.id !== t.created_by && user?.name !== t.responsible)
+      return allUsers.find(u => u.name === t.responsible) || allUsers.find(u => u.id === t.created_by) || { name: t.responsible || '—' };
     if (user?.id === t.created_by) return allUsers.find(u => u.name === t.responsible) || { name: t.responsible || '—' };
     return allUsers.find(u => u.id === t.created_by) || { name: '—' };
   };

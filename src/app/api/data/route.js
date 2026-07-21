@@ -49,18 +49,15 @@ export async function POST(request) {
       if (!gerenteCriaSubNoSeuSetor) {
       const alvoId = filters.find(f => f.type === 'eq' && f.col === 'id')?.val;
       const campos = data ? Object.keys(data) : [];
-      const permitidos = ['colunas', 'auto_pool'];
+      // 'name' liberado p/ o líder renomear o setor/sub-setor que lidera (config do gerente/responsável).
+      const permitidos = ['colunas', 'auto_pool', 'origin_visibility', 'name'];
       const soPermitidos = action === 'update' && campos.length > 0 && campos.every(c => permitidos.includes(c));
       if (!soPermitidos || alvoId == null) return semPermissao();
-      // Dono: está no primary_responsibles OU é o gerente/resp. lotado nele (cargo + setor_id/system_id).
-      const [donoRows] = await pool.query(`SELECT primary_responsibles FROM ${table} WHERE id = ? LIMIT 1`, [alvoId]);
-      let resp = donoRows[0]?.primary_responsibles;
-      if (typeof resp === 'string') { try { resp = JSON.parse(resp); } catch { resp = []; } }
-      const noPrimary = Array.isArray(resp) && resp.includes(usuario.id);
-      const porCargo = table === 'setores'
-        ? (usuario.role === 'gerente' && String(usuario.setor_id) === String(alvoId))
-        : (usuario.role === 'responsavel_subsetor' && String(usuario.system_id) === String(alvoId));
-      if (!noPrimary && !porCargo) return semPermissao();
+      // Dono = lidera esta entidade. escopoLider já cobre primary_responsibles, lotação (gerente/resp.)
+      // e os SUB-SETORES do setor que o gerente lidera (gerente do setor pai administra o sub-setor).
+      const { setorIds, subIds } = await escopoLider(usuario);
+      const lidera = table === 'setores' ? setorIds.has(String(alvoId)) : subIds.has(String(alvoId));
+      if (!lidera) return semPermissao();
       }
     }
     // Escrever em users (não-admin):

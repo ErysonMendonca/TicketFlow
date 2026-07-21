@@ -1,6 +1,6 @@
 // Self-check da regra de visibilidade. Rodar: node src/lib/visibility.test.mjs
 import assert from 'node:assert';
-import { canSeeTicket, leadSetorIds, leadSystemIds, colaboradoresDoSetor, podeAtribuir, isColaboradorDoSetor, userSystemIds, userSetorIds, noSetor, afiliadosDe } from './visibility.js';
+import { canSeeTicket, seVePorOrigem, leadSetorIds, leadSystemIds, colaboradoresDoSetor, podeAtribuir, isColaboradorDoSetor, userSystemIds, userSetorIds, noSetor, afiliadosDe, responsaveisDe } from './visibility.js';
 
 const setores = [{ id: 1, primary_responsibles: [10] }, { id: 2, primary_responsibles: [20] }];
 const systems = [{ id: 100, setor_id: 1, primary_responsibles: [30] }];
@@ -104,5 +104,46 @@ assert.ok(colaboradoresDoSetor(1, setores, systems2, [multiSetor]).includes(70))
 assert.ok(colaboradoresDoSetor(2, setores, systems2, [multiSetor]).includes(70));
 // vê open_pool dos dois setores
 assert.equal(canSeeTicket({ setor_id: 2, platform: null, created_by: 999, shared_with: [], open_pool: 1 }, multiSetor, setores, systems2), true);
+
+// --- Visibilidade de ORIGEM (config `origin_visibility` do setor de origem) ---
+const setoresOwn   = [{ id: 1, primary_responsibles: [10], origin_visibility: 'own' },      { id: 2, primary_responsibles: [20] }];
+const setoresSetor = [{ id: 1, primary_responsibles: [10], origin_visibility: 'setor' },    { id: 2, primary_responsibles: [20] }];
+const setoresSub   = [{ id: 1, primary_responsibles: [10], origin_visibility: 'subsetor' }, { id: 2, primary_responsibles: [20] }];
+const colegaSetor1 = { id: 80, role: 'funcionario', name: 'C80', setor_id: 1 };    // mesmo setor de origem, sem sub-setor
+const colegaSub100 = { id: 81, role: 'funcionario', name: 'C81', system_id: 100 }; // mesmo sub-setor de origem (setor 1)
+const forasteiro   = { id: 82, role: 'funcionario', name: 'C82', setor_id: 2 };    // outro setor
+const tEnviado = { setor_id: 2, platform: null, origin_setor_id: 1, origin_system_id: 100, created_by: 999, shared_with: [] };
+// own (default): colega NÃO vê o que o setor enviou
+assert.equal(canSeeTicket(tEnviado, colegaSetor1, setoresOwn, systems), false);
+// setor: qualquer um do setor de origem acompanha na lista
+assert.equal(canSeeTicket(tEnviado, colegaSetor1, setoresSetor, systems), true);
+assert.equal(canSeeTicket(tEnviado, forasteiro,   setoresSetor, systems), false);
+// subsetor: só quem está no MESMO sub-setor de origem
+assert.equal(canSeeTicket(tEnviado, colegaSub100, setoresSub, systems), true);
+assert.equal(canSeeTicket(tEnviado, colegaSetor1, setoresSub, systems), false); // no setor, mas não no sub-setor 100
+// não polui o Kanban do destino (includeOwn=false)
+assert.equal(canSeeTicket(tEnviado, colegaSetor1, setoresSetor, systems, false), false);
+// helper seVePorOrigem usado tanto no canSeeTicket quanto na aba "Enviados"
+assert.equal(seVePorOrigem(tEnviado, colegaSetor1, setoresSetor, systems), true);
+assert.equal(seVePorOrigem(tEnviado, colegaSetor1, setoresOwn, systems), false);
+assert.equal(seVePorOrigem(tEnviado, colegaSub100, setoresSub, systems), true);
+assert.equal(seVePorOrigem(tEnviado, forasteiro, setoresSetor, systems), false);
+// subsetor mode particionado por nível: ticket SEM sub-setor de origem (autor solto no setor)
+const tEnviadoSetor = { setor_id: 2, platform: null, origin_setor_id: 1, origin_system_id: null, created_by: 998, shared_with: [] };
+assert.equal(seVePorOrigem(tEnviadoSetor, colegaSetor1, setoresSub, systems), true);  // do setor sem sub-setor → vê os "do setor"
+assert.equal(seVePorOrigem(tEnviadoSetor, colegaSub100, setoresSub, systems), false); // está num sub-setor → só vê do sub-setor
+assert.equal(seVePorOrigem(tEnviado,      colegaSub100, setoresSub, systems), true);  // ticket de sub-setor → colega do sub-setor vê
+assert.equal(seVePorOrigem(tEnviado,      colegaSetor1, setoresSub, systems), false); // do setor não vê o do sub-setor
+
+// --- Múltiplos responsáveis (responsavel_id principal ∪ responsavel_ids extras) ---
+const membroMultiResp = { id: 90, role: 'funcionario', name: 'M90', responsavel_id: 10, responsavel_ids: [20] };
+assert.deepEqual(responsaveisDe(membroMultiResp).sort(), ['10', '20']);
+assert.deepEqual(responsaveisDe({ id: 91, responsavel_id: 10 }), ['10']);          // só principal
+assert.deepEqual(responsaveisDe({ id: 92, responsavel_ids: [30] }), ['30']);        // só extra
+assert.deepEqual(responsaveisDe({ id: 93 }), []);                                   // nenhum
+// ambos os responsáveis (10 e 20) enxergam o membro como afiliado
+assert.deepEqual(afiliadosDe(10, [membroMultiResp]).map(u => u.id), [90]);
+assert.deepEqual(afiliadosDe(20, [membroMultiResp]).map(u => u.id), [90]);          // responsável EXTRA também
+assert.deepEqual(afiliadosDe(99, [membroMultiResp]).map(u => u.id), []);            // quem não é responsável, não
 
 console.log('visibility.test: OK');

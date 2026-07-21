@@ -531,6 +531,7 @@ label {
   width: 100%;
   max-width: 500px;
   max-height: 90vh;
+  overflow-y: auto;
   padding: 2rem;
   color: var(--text-main);
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3), 0 0 0 1px var(--glass-border);
@@ -538,6 +539,20 @@ label {
   background: var(--surface);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
+}
+
+/* Descrição confortável de editar dentro do modal de criação */
+.modal textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+
+/* Botão de submit sempre alcançável mesmo com muito conteúdo */
+.modal form .btn-primary {
+  position: sticky;
+  bottom: 0;
+  box-shadow: 0 -14px 22px -6px var(--surface);
+  z-index: 1;
 }
 
 .modal-details-body {
@@ -1008,8 +1023,9 @@ label {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+  /* Crescem p/ preencher a tela quando são poucas; NÃO encolhem → colunas personalizadas extras geram scroll horizontal */
+  flex: 1 0 320px;
   min-width: 320px;
-  flex: 1;
   border: 1px solid var(--glass-border);
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -1256,6 +1272,15 @@ label {
     justify-content: center !important;
   }
 
+  /* Modal de criação: encaixa na tela e rola por dentro no mobile */
+  .overlay {
+    padding: 1rem;
+  }
+
+  .overlay .modal {
+    max-height: calc(100dvh - 2rem);
+  }
+
   .modal-details-body {
     flex-direction: column !important;
     min-height: 0 !important;
@@ -1334,7 +1359,8 @@ label {
   }
 
   .kanban-column {
-    min-width: 85vw;
+    flex: 0 0 85vw;
+    width: 85vw;
     scroll-snap-align: start;
     padding: 0.8rem;
   }

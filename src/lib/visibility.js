@@ -6,10 +6,19 @@
 
 const arr = (v) => (Array.isArray(v) ? v : []);
 
-// afiliados DIRETOS de um líder: usuários cujo responsavel_id = leaderId (os que ele cadastrou pelo link)
+// responsáveis efetivos de um usuário: principal (responsavel_id) ∪ extras (responsavel_ids, definidos pelo admin)
+export function responsaveisDe(user) {
+  if (!user) return [];
+  const ids = [...arr(user.responsavel_ids)];
+  if (user.responsavel_id != null) ids.push(user.responsavel_id);
+  return [...new Set(ids.map(String))];
+}
+
+// afiliados DIRETOS de um líder: usuários que têm leaderId como responsável (principal OU extra)
 export function afiliadosDe(leaderId, allUsers = []) {
   if (leaderId == null) return [];
-  return arr(allUsers).filter(u => u.responsavel_id != null && String(u.responsavel_id) === String(leaderId));
+  const lid = String(leaderId);
+  return arr(allUsers).filter(u => responsaveisDe(u).includes(lid));
 }
 
 // sub-setores em que o usuário trabalha: principal (system_id) ∪ extras (system_ids)
@@ -85,15 +94,40 @@ export function noSetor(user, setorId, systemsList = []) {
   return arr(systemsList).some(s => meus.has(String(s.id)) && String(s.setor_id) === String(setorId));
 }
 
+// Visibilidade de ORIGEM: cada setor tem `origin_visibility` (own|subsetor|setor). Quando != 'own',
+// os colegas do setor/sub-setor de ORIGEM enxergam na lista os chamados que a equipe enviou (config do gerente).
 // Um ticket é visível para o usuário? (admin tudo; funcionario só próprios/compartilhados;
 // gerente/resp. — dentro do escopo — veem as demandas SEM dono (a direcionar) + as atribuídas
 // aos seus AFILIADOS DIRETOS; sempre + próprios/atribuídos-a-si/compartilhados.)
 // includeOwn=false ignora o "abri este ticket" — usado no Kanban, onde quem só ENVIOU não vê o card.
 // allUsers é necessário p/ resolver os afiliados (ticket.responsible é NOME) — sem ele, cai no escopo do setor.
+// Visibilidade de ORIGEM: o setor de origem do ticket tem `origin_visibility` (own|subsetor|setor).
+// Retorna true quando a política libera este usuário a ver o chamado que a equipe de origem enviou.
+export function seVePorOrigem(t, user, setoresList = [], systemsList = []) {
+  if (!user || !t || t.origin_setor_id == null) return false;
+  const setorOrigem = arr(setoresList).find(s => String(s.id) === String(t.origin_setor_id));
+  const modo = setorOrigem?.origin_visibility || 'own';
+  if (modo === 'setor') return noSetor(user, t.origin_setor_id, systemsList);
+  if (modo === 'subsetor') {
+    // Particiona por NÍVEL de quem vê: sub-setor vê só o seu sub-setor; quem é do setor (sem sub-setor) vê os do setor.
+    const meusSubs = userSystemIds(user);
+    if (t.origin_system_id != null) {
+      // ticket veio de um SUB-SETOR → só quem está nesse sub-setor
+      return meusSubs.includes(String(t.origin_system_id));
+    }
+    // ticket veio do SETOR (autor sem sub-setor) → quem está no setor SEM sub-setor
+    return meusSubs.length === 0 && noSetor(user, t.origin_setor_id, systemsList);
+  }
+  return false;
+}
+
 export function canSeeTicket(t, user, setoresList = [], systemsList = [], includeOwn = true, allUsers = []) {
   if (!user) return false;
   if (user.role === 'admin') return true;
   if (includeOwn && t.created_by === user.id) return true;       // próprios (abriu)
+  // Visibilidade de origem: colegas do setor/sub-setor de quem abriu acompanham o chamado na LISTA
+  // (includeOwn) — sem poluir o Kanban do setor de DESTINO.
+  if (includeOwn && seVePorOrigem(t, user, setoresList, systemsList)) return true;
   if (user.name && t.responsible === user.name) return true;     // atribuído a mim (recebi a demanda)
   if (arr(t.shared_with).includes(user.id)) return true;         // compartilhados
   if (t.open_pool && noSetor(user, t.setor_id, systemsList)) return true; // demanda ABERTA ao setor → colaborador vê e pode puxar

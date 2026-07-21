@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS users (
     setor_ids JSON NULL, -- setores EXTRAS onde o membro também atua; visibilidade de setor = setor_id ∪ setor_ids
     system_id INT NULL, -- sub-setor (system) PRINCIPAL do funcionário/colaborador (um nível abaixo do setor)
     system_ids JSON NULL, -- sub-setores EXTRAS onde o funcionário também trabalha (além do principal); visibilidade = system_id ∪ system_ids
-    responsavel_id INT NULL, -- quem é o RESPONSÁVEL deste usuário (gerente/resp. que criou o link de cadastro)
+    responsavel_id INT NULL, -- RESPONSÁVEL PRINCIPAL deste usuário (gerente/resp. que criou o link de cadastro)
+    responsavel_ids JSON NULL, -- responsáveis EXTRAS (definidos pelo admin); efetivo = responsavel_id ∪ responsavel_ids
     blocked TINYINT DEFAULT 0, -- 1 = acesso bloqueado pelo responsável (não loga e a sessão ativa é recusada)
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     KEY idx_users_setor (setor_id),
@@ -32,6 +33,7 @@ CREATE TABLE IF NOT EXISTS setores (
     primary_responsibles JSON NULL, -- array de IDs de users (responsáveis/gerentes do setor; definem o escopo de visualização)
     colunas JSON NULL, -- colunas de Kanban personalizadas do setor: [{id,name,color}]
     auto_pool TINYINT DEFAULT 0, -- 1 = toda demanda que chega já nasce aberta ao time (open_pool) + notifica os funcionários (config do gerente)
+    origin_visibility VARCHAR(20) NOT NULL DEFAULT 'own', -- quem dos COLEGAS DE ORIGEM vê os chamados enviados por este setor: own (só o autor) | subsetor (mesmo sub-setor de origem) | setor (todo o setor de origem)
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -55,6 +57,7 @@ CREATE TABLE IF NOT EXISTS tickets (
     description TEXT,
     setor_id INT NULL, -- destino do ticket: o setor responsável
     origin_setor_id INT NULL, -- setor de ORIGEM (de quem abriu); ticket sempre vai p/ OUTRO setor
+    origin_system_id INT NULL, -- sub-setor de ORIGEM (system_id de quem abriu); usado pela visibilidade de origem no modo 'subsetor'
     platform VARCHAR(255) NULL, -- id do sistema/categoria dentro do setor (quando o setor ramifica); NULL p/ setor sem categorias
     status VARCHAR(50) NOT NULL DEFAULT 'backlog', -- backlog, doing, test, done
     urgency VARCHAR(50) NOT NULL DEFAULT 'leve', -- urgente, leve, etc

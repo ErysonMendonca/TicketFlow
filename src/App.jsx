@@ -2138,13 +2138,27 @@ function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, onTi
                   )}
                 </div>
 
-                <div style={{ textAlign: 'right', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <div style={{ textAlign: 'right', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                   {!!ticket.finalized && (
                     <span style={{ background: 'rgba(16,185,129,0.15)', color: '#10b981', padding: '3px 8px', borderRadius: '6px', fontSize: '0.65rem', fontWeight: 800, textTransform: 'uppercase' }}>
                       ✓ Finalizado
                     </span>
                   )}
-                  <StatusBadge id={ticket.status} setores={setores} systems={systems} />
+                  {(() => {
+                    // Coluna personalizada → mesma dupla do detalhe: base "Resolvendo" + "Etapa: <nome>"
+                    const fixos = [...DEV_STATUS, ...OTHER_STATUS].map(s => s.id);
+                    const ehCustom = ticket.status && !fixos.includes(ticket.status);
+                    if (!ehCustom) return <StatusBadge id={ticket.status} setores={setores} systems={systems} />;
+                    const et = statusInfo(ticket.status, setores, systems);
+                    return (
+                      <>
+                        <StatusBadge id="resolvendo" setores={setores} systems={systems} />
+                        <span className="badge" style={{ backgroundColor: (et.color || '#6366f1') + '20', color: et.color || '#6366f1', border: `1px solid ${(et.color || '#6366f1')}40` }}>
+                          Etapa: {et.name}
+                        </span>
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
             </motion.div>

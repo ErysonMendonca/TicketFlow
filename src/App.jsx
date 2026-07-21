@@ -1093,10 +1093,12 @@ export default function App() {
   useEffect(() => { ticketsRef.current = tickets; }, [tickets]);
   useEffect(() => {
     if (!user) return;
-    const fechados = ['resolvido', 'negado', 'repassado'];
+    // Só lembra enquanto a demanda ainda NÃO entrou em atendimento. Ao passar para "Resolvendo"
+    // (ou qualquer etapa seguinte, coluna personalizada ou fechamento) a notificação para.
+    const aindaAguardando = ['backlog', 'analise'];
     const lembrar = () => {
       (ticketsRef.current || [])
-        .filter(t => t.urgency === URGENCIA_MAXIMA && t.responsible === user.name && !fechados.includes(t.status))
+        .filter(t => t.urgency === URGENCIA_MAXIMA && t.responsible === user.name && aindaAguardando.includes(t.status))
         .forEach(t => {
           playSound('notification');
           toast(`🚨 URGÊNCIA MÁXIMA — Demanda #${t.id}: ${t.title}`, {
@@ -1223,15 +1225,20 @@ export default function App() {
     if (!s || new Date(m.created_at) > new Date(s)) unreadByTicket[m.ticket_id] = (unreadByTicket[m.ticket_id] || 0) + 1;
   }
 
-  // Conversas do usuário (bolha/inbox): tickets COM responsável em que ele é criador OU responsável.
-  const chatConversas = tickets.filter(t => t.responsible && (t.created_by === user?.id || t.responsible === user?.name || (Array.isArray(t.shared_with) && t.shared_with.includes(user?.id))));
-  // Última atividade por ticket → ordena a lista de conversas (msg mais recente no topo).
+  // Última atividade por ticket → ordena a lista de conversas (msg mais recente no topo) + detecta chats com mensagens.
   const lastMsgByTicket = {};
   for (const m of msgMeta) {
     const cur = lastMsgByTicket[m.ticket_id];
     if (!cur || new Date(m.created_at) > new Date(cur)) lastMsgByTicket[m.ticket_id] = m.created_at;
   }
-  const totalUnreadChat = chatConversas.reduce((s, t) => s + (unreadByTicket[t.id] || 0), 0);
+  // Sou participante da conversa? (criador, responsável ou compartilhado)
+  const souParticipanteChat = (t) => !!t.responsible && (t.created_by === user?.id || t.responsible === user?.name || (Array.isArray(t.shared_with) && t.shared_with.includes(user?.id)));
+  // Conversas do inbox. Admin visualiza TODOS os chats registrados (qualquer ticket com conversa/mensagens),
+  // em modo leitura; os demais veem só onde participam.
+  const ehAdminChat = user?.role === 'admin';
+  const chatConversas = tickets.filter(t => ehAdminChat ? (t.responsible || lastMsgByTicket[t.id]) : souParticipanteChat(t));
+  // Badge da bolha: mesmo o admin conta não-lidas só das conversas em que participa (não infla com o sistema todo).
+  const totalUnreadChat = chatConversas.reduce((s, t) => s + ((ehAdminChat && !souParticipanteChat(t)) ? 0 : (unreadByTicket[t.id] || 0)), 0);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -1304,6 +1311,16 @@ export default function App() {
         ? systemsList.find(s => String(s.id) === String(formData.platform))
         : null;
       const setorDestino = formData.setor ? Number(formData.setor) : (subSetorEscolhido?.setor_id ?? null);
+
+      // Permissão de destino (a ORIGEM define os destinos): não-admin só abre chamado para os setores
+      // liberados no SEU setor de origem. Sem config = não pode abrir para ninguém. Admin sempre pode.
+      if (user?.role !== 'admin') {
+        const org = setoresList.find(s => String(s.id) === String(user?.setor_id));
+        const permitidos = (Array.isArray(org?.destinos_permitidos) ? org.destinos_permitidos : []).map(String);
+        if (!permitidos.includes(String(setorDestino))) {
+          throw new Error('Seu setor não tem permissão para abrir chamado para o setor selecionado.');
+        }
+      }
 
       // Quem RECEBE direto = gerente do setor de destino (ou responsável do sub-setor). O criador NÃO escolhe;
       // o gerente é quem depois designa quem vai atender.
@@ -2014,7 +2031,10 @@ function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, onTi
       setorNome ? `Setor: ${setorNome}` : null,
       donoVisivel(t) ? `Responsável: ${donoVisivel(t)}` : 'Aguardando aceite',
       t.delivery_date ? `Entrega: ${fmtDataPura(t.delivery_date)}` : null,
-    ].filter(Boolean);
+      '', // linha em branco antes do link
+      '👉 Abrir o detalhe do ticket:',
+      `${window.location.origin}/#/ticket/${t.id}`,
+    ].filter(l => l !== null && l !== undefined);
     window.open(`https://wa.me/?text=${encodeURIComponent(linhas.join('\n'))}`, '_blank');
   };
 
@@ -2138,13 +2158,27 @@ function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, onTi
                   )}
                 </div>
 
-                <div style={{ textAlign: 'right', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <div style={{ textAlign: 'right', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                   {!!ticket.finalized && (
                     <span style={{ background: 'rgba(16,185,129,0.15)', color: '#10b981', padding: '3px 8px', borderRadius: '6px', fontSize: '0.65rem', fontWeight: 800, textTransform: 'uppercase' }}>
                       ✓ Finalizado
                     </span>
                   )}
-                  <StatusBadge id={ticket.status} setores={setores} systems={systems} />
+                  {(() => {
+                    // Coluna personalizada → mesma dupla do detalhe: base "Resolvendo" + "Etapa: <nome>"
+                    const fixos = [...DEV_STATUS, ...OTHER_STATUS].map(s => s.id);
+                    const ehCustom = ticket.status && !fixos.includes(ticket.status);
+                    if (!ehCustom) return <StatusBadge id={ticket.status} setores={setores} systems={systems} />;
+                    const et = statusInfo(ticket.status, setores, systems);
+                    return (
+                      <>
+                        <StatusBadge id="resolvendo" setores={setores} systems={systems} />
+                        <span className="badge" style={{ backgroundColor: (et.color || '#6366f1') + '20', color: et.color || '#6366f1', border: `1px solid ${(et.color || '#6366f1')}40` }}>
+                          Etapa: {et.name}
+                        </span>
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
             </motion.div>
@@ -2989,6 +3023,9 @@ function ChatInboxPage({ conversas = [], user, allUsers = [], setores = [], syst
 
   // outro participante da conversa (quem NÃO é o usuário atual)
   const outroLado = (t) => {
+    // Admin observa de fora: mostra quem está atendendo (responsável) como contraparte.
+    if (user?.role === 'admin' && user?.id !== t.created_by && user?.name !== t.responsible)
+      return allUsers.find(u => u.name === t.responsible) || allUsers.find(u => u.id === t.created_by) || { name: t.responsible || '—' };
     if (user?.id === t.created_by) return allUsers.find(u => u.name === t.responsible) || { name: t.responsible || '—' };
     return allUsers.find(u => u.id === t.created_by) || { name: '—' };
   };
@@ -3235,8 +3272,12 @@ function AnaliseGateModal({ ticket, onConfirm, onViewDetails, onClose }) {
 
 // --- Modal de Criação ---
 function TicketModal({ onClose, onSubmit, systems, setores = [], user, allUsers = [] }) {
-  // Destino pode ser qualquer setor, inclusive o próprio setor de quem abre.
-  const setoresDestino = setores;
+  // Destino permitido: admin abre para qualquer setor; os demais só para os destinos configurados
+  // no SEU setor de origem (sem config = nenhum destino disponível).
+  const ehAdminTicket = user?.role === 'admin';
+  const setorOrigem = setores.find(s => String(s.id) === String(user?.setor_id));
+  const destinosPermitidos = (Array.isArray(setorOrigem?.destinos_permitidos) ? setorOrigem.destinos_permitidos : []).map(String);
+  const setoresDestino = ehAdminTicket ? setores : setores.filter(s => destinosPermitidos.includes(String(s.id)));
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
@@ -3360,9 +3401,15 @@ function TicketModal({ onClose, onSubmit, systems, setores = [], user, allUsers 
               <option value="">Selecione o setor...</option>
               {setoresDestino.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
-            <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <UserPlus size={13} /> A demanda vai direto para o <b>gerente do setor</b>, que designa quem vai atender.
-            </p>
+            {!ehAdminTicket && setoresDestino.length === 0 ? (
+              <p style={{ fontSize: '0.72rem', color: '#ef4444', marginTop: '6px', display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600 }}>
+                <UserPlus size={13} /> Seu setor ainda não tem permissão para abrir chamado para nenhum setor. Fale com o administrador.
+              </p>
+            ) : (
+              <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <UserPlus size={13} /> A demanda vai direto para o <b>gerente do setor</b>, que designa quem vai atender.
+              </p>
+            )}
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: setorSystems.length > 0 ? '1fr 1fr' : '1fr', gap: '1rem' }}>
@@ -3509,7 +3556,10 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, setores = [], 
       setorDoTicket?.name ? `Setor: ${setorDoTicket.name}` : null,
       donoVisivel(ticket) ? `Responsável: ${donoVisivel(ticket)}` : 'Aguardando aceite',
       ticket.delivery_date ? `Entrega: ${fmtDataPura(ticket.delivery_date)}` : null,
-    ].filter(Boolean);
+      '', // linha em branco antes do link
+      '👉 Abrir o detalhe do ticket:',
+      `${window.location.origin}/#/ticket/${ticket.id}`,
+    ].filter(l => l !== null && l !== undefined);
     window.open(`https://wa.me/?text=${encodeURIComponent(linhas.join('\n'))}`, '_blank');
   };
 
@@ -4767,6 +4817,25 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
     } catch (e) { toast.error('Erro ao salvar a configuração.'); }
   };
 
+  // Liga/desliga auto_pool com valor explícito (usado pelo modal Editar Setor).
+  const setAutoPool = async (setor, val) => {
+    try {
+      const { error } = await api.from('setores').update({ auto_pool: val ? 1 : 0 }).eq('id', setor.id);
+      if (error) throw error;
+      onUpdate();
+    } catch (e) { toast.error('Erro ao salvar a configuração.'); }
+  };
+
+  // Destinos permitidos: setores para os quais ESTE setor pode abrir chamado (só admin configura).
+  const setDestinos = async (setor, ids) => {
+    try {
+      const { error } = await api.from('setores').update({ destinos_permitidos: ids }).eq('id', setor.id);
+      if (error) throw error;
+      toast.success('Destinos permitidos atualizados.');
+      onUpdate();
+    } catch (e) { toast.error('Erro ao salvar os destinos.'); }
+  };
+
   // Botão/indicador do auto_pool. canEdit → clicável (gerente/resp/admin); senão → só mostra quando ligado.
   const AutoPoolBtn = ({ table, entity, canEdit }) => {
     const on = !!entity.auto_pool;
@@ -4955,32 +5024,18 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
                     {podeConfigSetor(setor) && <button onClick={() => openModal('new_system', 'systems', null, setor.id)} className="icon-btn" title="Adicionar Sub-Setor"><Plus size={14} /></button>}
                     {podeConfigSetor(setor) && <button onClick={() => setLinkModal({ tipo: 'setor', target: setor })} className="icon-btn" title="Link de registro"><Link2 size={14} /></button>}
                     {podeConfigSetor(setor) && <button onClick={() => openModal('manage_resps', 'setores', setor)} className="icon-btn" title="Equipe do Setor — adicionar/remover seus funcionários"><UserPlus size={14} /></button>}
-                    {isAdmin && <>
-                      <button onClick={() => openModal('edit_name', 'setores', setor)} className="icon-btn" title="Editar Nome"><Pencil size={14} /></button>
-                      <button onClick={() => openModal('delete_confirm', 'setores', setor)} className="icon-btn logout" title="Excluir Setor"><Trash2 size={14} /></button>
-                    </>}
+                    {podeConfigSetor(setor) && <button onClick={() => openModal('edit_name', 'setores', setor)} className="icon-btn" title="Editar Setor (nome e configurações)"><Pencil size={14} /></button>}
+                    {isAdmin && <button onClick={() => openModal('delete_confirm', 'setores', setor)} className="icon-btn logout" title="Excluir Setor"><Trash2 size={14} /></button>}
                   </div>
                 </div>
               </div>
 
-              {/* Config do setor: time pega a demanda (auto_pool) */}
-              {(podeConfigSetor(setor) || !!setor.auto_pool) && (
+              {/* Indicador (só leitura) de "time pega a demanda" ligado; a configuração vive em Editar Setor */}
+              {!!setor.auto_pool && (
                 <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px' }}>
-                  <AutoPoolBtn table="setores" entity={setor} canEdit={podeConfigSetor(setor)} />
-                  {podeConfigSetor(setor) && (
-                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600 }} title="Quem, entre os colegas de origem, acompanha na lista os chamados enviados por este setor">
-                      <UserPlus size={12} /> Quem vê os envios do setor:
-                      <select
-                        value={setor.origin_visibility || 'own'}
-                        onChange={e => setOriginVisibility(setor, e.target.value)}
-                        style={{ width: 'auto', margin: 0, padding: '4px 8px', fontSize: '0.7rem', borderRadius: '999px' }}
-                      >
-                        <option value="own">Só o autor</option>
-                        <option value="subsetor">Mesmo sub-setor de origem</option>
-                        <option value="setor">Todo o setor de origem</option>
-                      </select>
-                    </label>
-                  )}
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '4px 10px', borderRadius: '999px', fontSize: '0.7rem', fontWeight: 700, border: '1px solid #10b981', background: 'rgba(16,185,129,0.12)', color: '#10b981' }}>
+                    <Users size={12} /> Time pega a demanda: ON
+                  </span>
                 </div>
               )}
 
@@ -5065,6 +5120,12 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
             onSaveName={handleSaveName}
             onSaveTeam={handleSaveTeam}
             onConfirmDelete={handleConfirmDelete}
+            setores={setores}
+            isAdmin={isAdmin}
+            canConfigSetor={editingEntity ? podeConfigSetor(editingEntity) : false}
+            onSetAutoPool={setAutoPool}
+            onSetOriginVisibility={setOriginVisibility}
+            onSetDestinos={setDestinos}
           />
         )}
       </AnimatePresence>
@@ -5079,9 +5140,14 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
 }
 
 // --- Sub-componente para Modais de Sistemas (Estabilidade de Portal/Animação) ---
-function SystemActionModal({ type, entityLabel = 'Sistema', table = 'setores', system, users, restrictToLeaderId = null, teamAssign = {}, onSetAssign, onClose, onSaveName, onSaveTeam, onConfirmDelete }) {
+function SystemActionModal({ type, entityLabel = 'Sistema', table = 'setores', system, users, restrictToLeaderId = null, teamAssign = {}, onSetAssign, onClose, onSaveName, onSaveTeam, onConfirmDelete,
+  setores = [], isAdmin = false, canConfigSetor = false, onSetAutoPool, onSetOriginVisibility, onSetDestinos }) {
   const [mounted, setMounted] = useState(false);
   const [busca, setBusca] = useState('');
+  // Config do setor (estado local p/ feedback imediato; cada mudança persiste na hora via handler do pai)
+  const [cfgAuto, setCfgAuto] = useState(!!system?.auto_pool);
+  const [cfgVis, setCfgVis] = useState(system?.origin_visibility || 'own');
+  const [cfgDest, setCfgDest] = useState((Array.isArray(system?.destinos_permitidos) ? system.destinos_permitidos : []).map(String));
   useEffect(() => setMounted(true), []);
 
   const fem = entityLabel.endsWith('a'); // concordância de gênero (ex: Categoria)
@@ -5102,7 +5168,7 @@ function SystemActionModal({ type, entityLabel = 'Sistema', table = 'setores', s
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
           <h2>
-            {type === 'edit_name' && 'Editar Nome'}
+            {type === 'edit_name' && (table === 'setores' ? 'Editar Setor' : 'Editar Nome')}
             {type === 'new_system' && `${fem ? 'Nova' : 'Novo'} ${entityLabel}`}
             {type === 'manage_resps' && `Gerenciar Equipe · ${entityLabel}`}
             {type === 'delete_confirm' && 'Confirmar Exclusão'}
@@ -5116,8 +5182,62 @@ function SystemActionModal({ type, entityLabel = 'Sistema', table = 'setores', s
           <form onSubmit={onSaveName} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
             <div className="form-group">
               <label>Nome d{fem ? 'a' : 'o'} {entityLabel}</label>
-              <input name="name" defaultValue={system?.name} placeholder={entityLabel === 'Setor' ? 'Ex: TI, Financeiro...' : 'Ex: Matriz, Zaploto...'} required autoFocus />
+              <input name="name" defaultValue={system?.name} placeholder={entityLabel === 'Setor' ? 'Ex: TI, Financeiro...' : 'Ex: Matriz, Zaploto...'} required autoFocus readOnly={type === 'edit_name' && table === 'setores' && !isAdmin} />
+              {type === 'edit_name' && table === 'setores' && !isAdmin && (
+                <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '4px' }}>Só o administrador pode renomear o setor.</p>
+              )}
             </div>
+
+            {/* Configurações do setor (movidas do card para cá) */}
+            {type === 'edit_name' && table === 'setores' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', borderTop: '1px solid var(--glass-border)', paddingTop: '1.25rem' }}>
+                <div style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', fontWeight: 700 }}>Configurações do setor</div>
+
+                {canConfigSetor && (
+                  <button type="button"
+                    onClick={() => { const v = !cfgAuto; setCfgAuto(v); onSetAutoPool && onSetAutoPool(system, v); }}
+                    title="Toda demanda que chega já fica disponível pro time pegar (notifica os funcionários)"
+                    style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '6px 12px', borderRadius: '999px', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', border: `1px solid ${cfgAuto ? '#10b981' : 'var(--glass-border)'}`, background: cfgAuto ? 'rgba(16,185,129,0.12)' : 'transparent', color: cfgAuto ? '#10b981' : 'var(--text-muted)' }}>
+                    <Users size={13} /> Time pega a demanda: {cfgAuto ? 'ON' : 'OFF'}
+                  </button>
+                )}
+
+                {canConfigSetor && (
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>
+                    Quem vê os envios do setor (colegas de origem):
+                    <select value={cfgVis} onChange={e => { setCfgVis(e.target.value); onSetOriginVisibility && onSetOriginVisibility(system, e.target.value); }} style={{ margin: 0, padding: '8px', fontSize: '0.8rem' }}>
+                      <option value="own">Só o autor</option>
+                      <option value="subsetor">Mesmo sub-setor de origem</option>
+                      <option value="setor">Todo o setor de origem</option>
+                    </select>
+                  </label>
+                )}
+
+                {isAdmin && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                      title="Setores de destino para os quais este setor pode abrir chamado. Vazio = não pode abrir para nenhum. Admin sempre pode.">
+                      <Share2 size={13} /> Pode abrir chamado para:
+                    </span>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                      {setores.length === 0 && <span style={{ fontSize: '0.72rem', fontStyle: 'italic', color: 'var(--text-muted)' }}>Nenhum setor.</span>}
+                      {setores.map(alvo => {
+                        const on = cfgDest.includes(String(alvo.id));
+                        const proprio = String(alvo.id) === String(system?.id);
+                        return (
+                          <button key={alvo.id} type="button"
+                            onClick={() => { const novo = on ? cfgDest.filter(x => x !== String(alvo.id)) : [...cfgDest, String(alvo.id)]; setCfgDest(novo); onSetDestinos && onSetDestinos(system, novo); }}
+                            style={{ padding: '4px 10px', borderRadius: '999px', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer', border: `1px solid ${on ? 'var(--primary)' : 'var(--glass-border)'}`, background: on ? 'rgba(99,102,241,0.12)' : 'transparent', color: on ? 'var(--primary)' : 'var(--text-muted)' }}>
+                            {on ? '✓ ' : ''}{alvo.name}{proprio ? ' (próprio)' : ''}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             <button type="submit" className="btn btn-primary" style={{ width: '100%' }}>Gravar Alterações</button>
           </form>
         )}

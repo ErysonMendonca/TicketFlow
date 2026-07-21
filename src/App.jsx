@@ -1093,10 +1093,12 @@ export default function App() {
   useEffect(() => { ticketsRef.current = tickets; }, [tickets]);
   useEffect(() => {
     if (!user) return;
-    const fechados = ['resolvido', 'negado', 'repassado'];
+    // Só lembra enquanto a demanda ainda NÃO entrou em atendimento. Ao passar para "Resolvendo"
+    // (ou qualquer etapa seguinte, coluna personalizada ou fechamento) a notificação para.
+    const aindaAguardando = ['backlog', 'analise'];
     const lembrar = () => {
       (ticketsRef.current || [])
-        .filter(t => t.urgency === URGENCIA_MAXIMA && t.responsible === user.name && !fechados.includes(t.status))
+        .filter(t => t.urgency === URGENCIA_MAXIMA && t.responsible === user.name && aindaAguardando.includes(t.status))
         .forEach(t => {
           playSound('notification');
           toast(`🚨 URGÊNCIA MÁXIMA — Demanda #${t.id}: ${t.title}`, {

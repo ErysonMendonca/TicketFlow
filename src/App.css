@@ -531,9 +531,28 @@ label {
   width: 100%;
   max-width: 500px;
   max-height: 90vh;
+  overflow-y: auto;
   padding: 2rem;
   color: var(--text-main);
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3), 0 0 0 1px var(--glass-border);
+  /* Sem efeito glass nos modais: fundo sólido e sem blur */
+  background: var(--surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* Descrição confortável de editar dentro do modal de criação */
+.modal textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+
+/* Botão de submit sempre alcançável mesmo com muito conteúdo */
+.modal form .btn-primary {
+  position: sticky;
+  bottom: 0;
+  box-shadow: 0 -14px 22px -6px var(--surface);
+  z-index: 1;
 }
 
 .modal-details-body {
@@ -1004,8 +1023,9 @@ label {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+  /* Crescem p/ preencher a tela quando são poucas; NÃO encolhem → colunas personalizadas extras geram scroll horizontal */
+  flex: 1 0 320px;
   min-width: 320px;
-  flex: 1;
   border: 1px solid var(--glass-border);
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -1252,6 +1272,15 @@ label {
     justify-content: center !important;
   }
 
+  /* Modal de criação: encaixa na tela e rola por dentro no mobile */
+  .overlay {
+    padding: 1rem;
+  }
+
+  .overlay .modal {
+    max-height: calc(100dvh - 2rem);
+  }
+
   .modal-details-body {
     flex-direction: column !important;
     min-height: 0 !important;
@@ -1330,15 +1359,27 @@ label {
   }
 
   .kanban-column {
-    min-width: 85vw;
+    flex: 0 0 85vw;
+    width: 85vw;
     scroll-snap-align: start;
     padding: 0.8rem;
   }
 
+  /* Card de ticket empilha no mobile: info em cima, ações em baixo (linha) */
+  .ticket-card {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    justify-content: flex-start !important;
+    gap: 0.85rem !important;
+    padding: 1rem !important;
+  }
   .user-dash-actions {
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 0.5rem !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    width: 100%;
+    flex-wrap: wrap;
+    gap: 8px !important;
   }
 
   .modal-details-body {
@@ -1506,4 +1547,16 @@ label {
   overflow-y: auto;
   z-index: 10;
   margin-bottom: 5px;
+}
+
+/* --- Inbox de conversas (bolha) estilo WhatsApp Web --- */
+.chat-inbox { display: flex; gap: 1rem; height: 100%; min-height: 0; }
+.chat-inbox .ci-list { flex: 0 0 340px; width: 340px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.chat-inbox .ci-chat { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.chat-inbox .ci-back { display: none; }  /* seta Voltar só no mobile */
+@media (max-width: 768px) {
+  .chat-inbox .ci-list { flex: 1 1 auto; width: 100%; }
+  .chat-inbox.has-selection .ci-list { display: none; }        /* selecionou → esconde a lista */
+  .chat-inbox:not(.has-selection) .ci-chat { display: none; }  /* sem seleção → só a lista */
+  .chat-inbox .ci-back { display: inline-flex; }
 }

@@ -30,6 +30,10 @@ export async function POST(request) {
       return NextResponse.json({ error: 'E-mail ou senha incorretos.' }, { status: 401 });
     }
 
+    if (user.blocked) {
+      return NextResponse.json({ error: 'Acesso bloqueado. Fale com seu responsável.' }, { status: 403 });
+    }
+
     tentativas.delete(chave); // sucesso zera o contador da conta
     const token = await criarSessao(user.id, ip);
     await pool.query('UPDATE users SET is_online = 1 WHERE id = ?', [user.id]).catch(() => {});

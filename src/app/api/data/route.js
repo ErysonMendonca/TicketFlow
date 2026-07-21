@@ -2,6 +2,23 @@ import { NextResponse } from 'next/server';
 import { pool } from '@/lib/db.js';
 import { usuarioDaSessao, hashSenha } from '@/lib/auth.js';
 
+const parseArr = (v) => { if (Array.isArray(v)) return v; try { return JSON.parse(v || '[]'); } catch { return []; } };
+
+// Setores/sub-setores que o usuário LIDERA (p/ validar o que um líder pode atribuir a um afiliado).
+async function escopoLider(usuario) {
+  const setorIds = new Set(), subIds = new Set();
+  if (usuario.role === 'gerente' && usuario.setor_id != null) setorIds.add(String(usuario.setor_id));
+  if (usuario.role === 'responsavel_subsetor' && usuario.system_id != null) subIds.add(String(usuario.system_id));
+  const [setores] = await pool.query('SELECT id, primary_responsibles FROM setores');
+  for (const s of setores) if (parseArr(s.primary_responsibles).includes(usuario.id)) setorIds.add(String(s.id));
+  const [systems] = await pool.query('SELECT id, setor_id, primary_responsibles FROM systems');
+  for (const sy of systems) {
+    if (parseArr(sy.primary_responsibles).includes(usuario.id)) subIds.add(String(sy.id));
+    if (setorIds.has(String(sy.setor_id))) subIds.add(String(sy.id)); // gerente controla os sub-setores do seu setor
+  }
+  return { setorIds, subIds };
+}
+
 export async function POST(request) {
   try {
     const body = await request.json();
@@ -16,6 +33,7 @@ export async function POST(request) {
     // --- AUTENTICAÇÃO: nada é acessível sem login ---
     const usuario = await usuarioDaSessao(request);
     if (!usuario) return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
+    if (usuario.blocked) return NextResponse.json({ error: 'Acesso bloqueado.' }, { status: 403 }); // corta a sessão ativa na hora
     const admin = usuario.role === 'admin';
 
     // --- AUTORIZAÇÃO POR CARGO (o que seu cargo não alcança é bloqueado no servidor) ---
@@ -23,25 +41,56 @@ export async function POST(request) {
     // Escrever em setores/systems: só admin — EXCEÇÃO: quem lidera pode editar campos de configuração
     // (`colunas` do Kanban e `auto_pool`) do setor/sub-setor que lidera.
     if (['setores', 'systems'].includes(table) && action !== 'select' && !admin) {
+      // EXCEÇÃO: o GERENTE cria SUB-SETOR (system) no PRÓPRIO setor (insert com setor_id = o setor dele).
+      const linhas = data ? (Array.isArray(data) ? data : [data]) : [];
+      const gerenteCriaSubNoSeuSetor = table === 'systems' && action === 'insert'
+        && usuario.role === 'gerente' && usuario.setor_id != null
+        && linhas.length > 0 && linhas.every(d => String(d.setor_id) === String(usuario.setor_id));
+      if (!gerenteCriaSubNoSeuSetor) {
       const alvoId = filters.find(f => f.type === 'eq' && f.col === 'id')?.val;
       const campos = data ? Object.keys(data) : [];
-      const permitidos = ['colunas', 'auto_pool'];
+      // 'name' liberado p/ o líder renomear o setor/sub-setor que lidera (config do gerente/responsável).
+      const permitidos = ['colunas', 'auto_pool', 'origin_visibility', 'name'];
       const soPermitidos = action === 'update' && campos.length > 0 && campos.every(c => permitidos.includes(c));
       if (!soPermitidos || alvoId == null) return semPermissao();
-      // Dono: está no primary_responsibles OU é o gerente/resp. lotado nele (cargo + setor_id/system_id).
-      const [donoRows] = await pool.query(`SELECT primary_responsibles FROM ${table} WHERE id = ? LIMIT 1`, [alvoId]);
-      let resp = donoRows[0]?.primary_responsibles;
-      if (typeof resp === 'string') { try { resp = JSON.parse(resp); } catch { resp = []; } }
-      const noPrimary = Array.isArray(resp) && resp.includes(usuario.id);
-      const porCargo = table === 'setores'
-        ? (usuario.role === 'gerente' && String(usuario.setor_id) === String(alvoId))
-        : (usuario.role === 'responsavel_subsetor' && String(usuario.system_id) === String(alvoId));
-      if (!noPrimary && !porCargo) return semPermissao();
+      // Dono = lidera esta entidade. escopoLider já cobre primary_responsibles, lotação (gerente/resp.)
+      // e os SUB-SETORES do setor que o gerente lidera (gerente do setor pai administra o sub-setor).
+      const { setorIds, subIds } = await escopoLider(usuario);
+      const lidera = table === 'setores' ? setorIds.has(String(alvoId)) : subIds.has(String(alvoId));
+      if (!lidera) return semPermissao();
+      }
     }
-    // Escrever em users: só admin — exceto a PRÓPRIA linha (is_online / perfil)
+    // Escrever em users (não-admin):
+    //   (a) PRÓPRIA linha → só perfil (nunca role/blocked/setor*/system*/responsavel_id);
+    //   (b) LÍDER editando um afiliado (responsavel_id = ele) → cargo/lotação/bloqueio/senha,
+    //       validando o ESCOPO (só setores/sub-setores que ele lidera) e sem criar admin.
     if (table === 'users' && action !== 'select' && !admin) {
       const alvo = filters.find(f => f.type === 'eq' && f.col === 'id')?.val;
-      if (String(alvo) !== String(usuario.id)) return semPermissao();
+      const campos = data ? Object.keys(data) : [];
+      if (String(alvo) === String(usuario.id)) {
+        const proprios = ['is_online', 'avatar', 'name', 'password']; // perfil próprio
+        const soProprios = action === 'update' && campos.length > 0 && campos.every(c => proprios.includes(c));
+        if (!soProprios) return semPermissao(); // C2: bloqueia auto-escalonamento (role/blocked/setor_id na própria linha)
+      } else {
+        const permitidos = ['system_id', 'system_ids', 'setor_id', 'setor_ids', 'role', 'blocked', 'password'];
+        const soPermitidos = action === 'update' && campos.length > 0 && campos.every(c => permitidos.includes(c));
+        // role: só funcionario/responsavel_subsetor; 'gerente' apenas se QUEM edita é gerente. Nunca admin.
+        const roleOk = data?.role == null || ['funcionario', 'responsavel_subsetor'].includes(data.role)
+          || (data.role === 'gerente' && usuario.role === 'gerente');
+        let lidera = false;
+        if (soPermitidos && roleOk && alvo != null && ['gerente', 'responsavel_subsetor'].includes(usuario.role)) {
+          const [tRows] = await pool.query('SELECT responsavel_id FROM users WHERE id = ? LIMIT 1', [alvo]);
+          lidera = tRows[0] && String(tRows[0].responsavel_id) === String(usuario.id);
+        }
+        if (!lidera) return semPermissao();
+        // C3: cada setor/sub-setor atribuído tem que estar no escopo que ELE lidera.
+        const alvoSetores = [data.setor_id, ...parseArr(data.setor_ids)].filter(v => v != null).map(String);
+        const alvoSubs = [data.system_id, ...parseArr(data.system_ids)].filter(v => v != null).map(String);
+        if (alvoSetores.length || alvoSubs.length) {
+          const { setorIds, subIds } = await escopoLider(usuario);
+          if (!alvoSetores.every(x => setorIds.has(x)) || !alvoSubs.every(x => subIds.has(x))) return semPermissao();
+        }
+      }
     }
     // Ler logs do sistema: só admin
     if (table === 'system_logs' && action === 'select' && !admin) return semPermissao();

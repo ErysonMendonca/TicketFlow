@@ -45,6 +45,7 @@ export const TICKET_TYPES = [
   { id: 'bug', name: 'Bug', color: '#ef4444' },
   { id: 'problema', name: 'Problema', color: '#f59e0b' },
   { id: 'melhoria', name: 'Melhoria', color: '#10b981' },
+  { id: 'recorrente', name: 'Recorrente', color: '#8b5cf6' },
 ];
 
 export const OTHER_STATUS = [

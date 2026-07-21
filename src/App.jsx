@@ -56,7 +56,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { api } from './lib/api';
 import toast, { Toaster } from 'react-hot-toast';
 import { PLATFORMS, DEV_STATUS, URGENCY_LEVELS, URGENCIA_MAXIMA, OTHER_STATUS, MOCK_USERS, TICKET_TYPES, ROLES, ROLE_LABELS, ROLE_COLORS, isManager, BOARD_ROLES } from './constants';
-import { canSeeTicket, colaboradoresDoSetor, podeAtribuir, isColaboradorDoSetor, leadSetorIds, leadSystemIds, noSetor } from './lib/visibility';
+import { canSeeTicket, seVePorOrigem, colaboradoresDoSetor, podeAtribuir, isColaboradorDoSetor, leadSetorIds, leadSystemIds, noSetor, afiliadosDe, responsaveisDe, userSetorIds, userSystemIds } from './lib/visibility';
 import { io } from 'socket.io-client';
 
 // WebSocket: em produção conecta no mesmo domínio (proxy Nginx → servidor de socket);
@@ -445,12 +445,10 @@ function LoginScreen({ onLogin }) {
 
 // Tela pública de auto-registro via link (#/registro/<tipo>/<id>/<papel>) — mesma casca glass do login
 function RegistroScreen({ hash }) {
-  const parts = hash.replace(/^#\/?/, '').split('/'); // ['registro','setor','2','user']
-  const tipo = parts[1];                 // 'setor' | 'categoria'
-  const id = Number(parts[2]);
-  // atende → responsavel_subsetor; senão abre chamados → funcionario. Aceita links antigos ('dev'/'user').
-  const papel = (parts[3] === 'dev' || parts[3] === 'responsavel_subsetor') ? 'responsavel_subsetor' : 'funcionario';
-
+  // #/registro/<token> — o token assinado carrega tipo/id/papel/criador (não vêm da URL crua).
+  const token = hash.replace(/^#\/?registro\/?/, '');
+  const [tipo, setTipo] = useState(null);      // 'setor' | 'categoria' (resolvido do token pelo servidor)
+  const [papel, setPapel] = useState('funcionario');
   const [target, setTarget] = useState(null);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({ name: '', email: '', password: '' });
@@ -461,9 +459,13 @@ function RegistroScreen({ hash }) {
 
   useEffect(() => {
     (async () => {
-      const table = tipo === 'setor' ? 'setores' : 'systems';
-      const { data } = await api.from(table).select('*').eq('id', id).single();
-      setTarget(data || null);
+      try {
+        const res = await fetch(`/api/register?token=${encodeURIComponent(token)}`);
+        const j = await res.json();
+        setTarget(j.target || null);
+        if (j.tipo) setTipo(j.tipo);
+        if (j.papel) setPapel(j.papel);
+      } catch { setTarget(null); }
       setLoading(false);
     })();
   }, []);
@@ -487,7 +489,7 @@ function RegistroScreen({ hash }) {
       // Auto-registro público via rota dedicada (escrever em users pelo /api/data é só admin agora)
       const res = await fetch('/api/register', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: form.name, email: form.email, password: form.password, tipo, id, papel }),
+        body: JSON.stringify({ name: form.name, email: form.email, password: form.password, token }),
       });
       const j = await res.json();
       if (!res.ok || !j.ok) throw new Error(j.error || 'Falha no cadastro.');
@@ -523,7 +525,7 @@ function RegistroScreen({ hash }) {
     return (
       <>
         <p className="tt-reg-sub">
-          {tipo === 'categoria' ? 'Sub-Setor' : 'Setor'}: <strong>{target.name}</strong> · {papel === 'responsavel_subsetor' ? 'atende os chamados' : 'abre chamados'}
+          {tipo === 'categoria' ? 'Sub-Setor' : 'Setor'}: <strong>{target.name}</strong> · {papel === 'gerente' ? 'gerente do setor' : papel === 'responsavel_subsetor' ? 'responsável do sub-setor' : 'abre chamados'}
         </p>
         <form className="tt-form" onSubmit={handleSubmit}>
           <div className="tt-field">
@@ -614,14 +616,55 @@ function RegistroScreen({ hash }) {
   );
 }
 
-// Modal p/ gerar/copiar o link de registro de um setor ou categoria
-function RegistroLinkModal({ tipo, target, onClose }) {
+// Modal p/ gerar/copiar o link de registro de um setor ou categoria.
+// `criador` = quem gera o link → vira o RESPONSÁVEL de quem se cadastrar por ele.
+// Se o alvo é um setor, o gerente pode mirar o setor todo OU um sub-setor dele (destino).
+function RegistroLinkModal({ tipo, target, criador, systems = [], onClose }) {
   const [mounted, setMounted] = useState(false);
+  const [papel, setPapel] = useState('funcionario'); // 'gestor' | 'funcionario' (role real derivado do destino)
+  const [destino, setDestino] = useState(''); // 'sub:<id>' quando o gerente mira um sub-setor
+  const [link, setLink] = useState('');
+  const [gerando, setGerando] = useState(false);
   useEffect(() => setMounted(true), []);
-  const [papel, setPapel] = useState('funcionario');
+
+  const subsDoSetor = tipo === 'setor' ? systems.filter(s => String(s.setor_id) === String(target.id)) : [];
+  // resolve tipo/id efetivos a partir do destino escolhido
+  let effTipo = tipo, effId = target.id;
+  if (tipo === 'setor' && destino.startsWith('sub:')) { effTipo = 'categoria'; effId = Number(destino.slice(4)); }
+  // Cargo de gestão depende do destino: setor → Gerente; sub-setor → Responsável do sub-setor.
+  const gestorRole = effTipo === 'setor' ? 'gerente' : 'responsavel_subsetor';
+  const gestorLabel = effTipo === 'setor' ? 'Gerente' : 'Responsável do sub-setor';
+  const effRole = papel === 'gestor' ? gestorRole : 'funcionario';
+  const descricoes = {
+    gerente: 'Ao entrar: recebe as demandas do setor, direciona para a equipe e acompanha no Kanban os funcionários que cadastrou.',
+    responsavel_subsetor: 'Ao entrar: recebe e direciona as demandas do sub-setor e acompanha no Kanban os funcionários que cadastrou.',
+    funcionario: 'Ao entrar: abre chamados e atende só as demandas direcionadas a ele (ou abertas ao setor para puxar).',
+  };
+
+  // O link é ASSINADO pelo servidor (o papel/alvo não podem vir da URL) — pede um token ao gerar/mudar a seleção.
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      setGerando(true); setLink('');
+      try {
+        const tk = (typeof localStorage !== 'undefined') ? localStorage.getItem('sessionToken') : null;
+        const res = await fetch('/api/register-link', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...(tk ? { 'x-session-token': tk } : {}) },
+          body: JSON.stringify({ tipo: effTipo, id: effId, papel: effRole }),
+        });
+        const j = await res.json();
+        if (!cancel) setLink(res.ok && j.token ? `${window.location.origin}/#/registro/${j.token}` : '');
+      } catch { if (!cancel) setLink(''); }
+      finally { if (!cancel) setGerando(false); }
+    })();
+    return () => { cancel = true; };
+  }, [effTipo, effId, effRole]);
+
   if (!mounted) return null;
-  const link = `${window.location.origin}/#/registro/${tipo}/${target.id}/${papel}`;
+
   const copiar = async () => {
+    if (!link) return;
     try { await navigator.clipboard.writeText(link); toast.success('Link copiado!'); }
     catch { toast.error('Copie o link manualmente.'); }
   };
@@ -639,19 +682,38 @@ function RegistroLinkModal({ tipo, target, onClose }) {
           <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={20} /></button>
         </div>
 
+        {tipo === 'setor' && subsDoSetor.length > 0 && (
+          <div className="form-group">
+            <label style={{ fontSize: '0.75rem' }}>Cadastrar em…</label>
+            <select value={destino} onChange={e => setDestino(e.target.value)}>
+              <option value="">{target.name} (setor todo)</option>
+              {subsDoSetor.map(s => <option key={s.id} value={`sub:${s.id}`}>Sub-setor: {s.name}</option>)}
+            </select>
+          </div>
+        )}
+
         <div className="form-group">
-          <label style={{ fontSize: '0.75rem' }}>Quem entrar por este link será…</label>
+          <label style={{ fontSize: '0.75rem' }}>Cargo de quem entrar por este link</label>
           <select value={papel} onChange={e => setPapel(e.target.value)}>
-            <option value="funcionario">Funcionário que abre chamados</option>
-            <option value="responsavel_subsetor">Membro que atende (vira responsável)</option>
+            <option value="gestor">{gestorLabel}</option>
+            <option value="funcionario">Funcionário</option>
           </select>
+          <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', margin: '6px 0 0', lineHeight: 1.4 }}>
+            {descricoes[effRole]}
+          </p>
         </div>
+
+        {criador?.name && (
+          <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', margin: '2px 0 0' }}>
+            Responsável de quem se cadastrar: <strong>{criador.name}</strong>
+          </p>
+        )}
 
         <div style={{ marginTop: '1rem' }}>
           <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Link (envie para a pessoa)</label>
           <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
-            <input readOnly value={link} onFocus={e => e.target.select()} style={{ flex: 1, fontSize: '0.8rem', margin: 0 }} />
-            <button className="btn btn-primary" style={{ flex: '0 0 auto' }} onClick={copiar}>Copiar</button>
+            <input readOnly value={gerando ? 'Gerando link…' : link} onFocus={e => e.target.select()} style={{ flex: 1, fontSize: '0.8rem', margin: 0 }} />
+            <button className="btn btn-primary" style={{ flex: '0 0 auto' }} onClick={copiar} disabled={gerando || !link}>Copiar</button>
           </div>
         </div>
       </motion.div>
@@ -671,7 +733,7 @@ function AppHeader({ currentView, setView, user, theme, toggleTheme, onLogout, b
   const menus = [
     { id: 'tickets', name: 'Tickets', icon: <UserIcon size={18} />, roles: ROLES },
     { id: 'kanban', name: 'Kanban', icon: <LayoutDashboard size={18} />, roles: ROLES }, // todos, inclusive funcionário (atende os recebidos)
-    { id: 'users', name: 'Usuários', icon: <Users size={18} />, roles: ['admin'] },
+    { id: 'users', name: 'Usuários', icon: <Users size={18} />, roles: ['admin', 'gerente', 'responsavel_subsetor'] },
     { id: 'setores', name: 'Setores', icon: <Layers size={18} />, roles: ['admin', 'gerente', 'responsavel_subsetor'] },
     { id: 'analytics', name: 'Relatórios', icon: <BarChart3 size={18} />, roles: manageRoles }, // depois de Setores; gerente/resp./admin — funcionário não
     { id: 'logs', name: 'Logs', icon: <Activity size={18} />, roles: ['admin'] },
@@ -843,20 +905,23 @@ export default function App() {
     } catch(e) {}
   };
 
+  // Recarrega setores (com origin_visibility/auto_pool) + sub-setores. Usado no boot e em tempo real
+  // quando a config de um setor muda em outro cliente (evento socket users_refreshed).
+  const fetchSetores = async () => {
+    try {
+      const { data: setData } = await api.from('setores').select('*').order('name');
+      setSetoresList(setData || []);
+    } catch(e) { setSetoresList([]); }
+    try {
+      const { data: sysData, error: sysErr } = await api.from('systems').select('*');
+      if (!sysErr && sysData && sysData.length > 0) setSystemsList(sysData);
+      else setSystemsList(PLATFORMS);
+    } catch(e) { setSystemsList(PLATFORMS); }
+  };
+
   useEffect(() => {
     const initData = async () => {
-      // Carregar Setores
-      try {
-        const { data: setData } = await api.from('setores').select('*').order('name');
-        setSetoresList(setData || []);
-      } catch(e) { setSetoresList([]); }
-
-      // Carregar Sistemas
-      try {
-        const { data: sysData, error: sysErr } = await api.from('systems').select('*');
-        if (!sysErr && sysData && sysData.length > 0) setSystemsList(sysData);
-        else setSystemsList(PLATFORMS);
-      } catch(e) { setSystemsList(PLATFORMS); }
+      await fetchSetores();
 
       // Carregar Usuários
       await fetchUsersList();
@@ -907,16 +972,16 @@ export default function App() {
     });
 
     socket.on('new_mention_alert', (data) => {
-      // Toca o som de notificação para todos os Devs/Admins
-      if (isManager(user?.role)) {
+      // Notifica a PESSOA mencionada (não mais todos os gestores)
+      if (data.toUserId === user?.id) {
         playSound('notification');
-        toast(`📍 @${data.mentioned} foi mencionado no Ticket #${data.ticketId}!`, {
+        toast(`🏷️ ${data.from || 'Alguém'} mencionou você no Ticket #${data.ticketId}`, {
           duration: 10000,
           position: 'top-center',
           icon: '🏷️',
-          style: { 
-            background: '#4f46e5', 
-            color: 'white', 
+          style: {
+            background: '#4f46e5',
+            color: 'white',
             border: '2px solid rgba(255,255,255,0.2)',
             fontWeight: '800'
           }
@@ -934,9 +999,11 @@ export default function App() {
       if (data?.id != null) setTickets(prev => prev.filter(t => t.id !== data.id));
     });
 
-    // Membro criado/removido em outro cliente → atualiza a lista sem recarregar
+    // Membro criado/removido OU config de setor alterada em outro cliente → atualiza sem recarregar.
+    // Recarrega também os setores para refletir origin_visibility/auto_pool em tempo real (aba Enviados).
     socket.on('users_refreshed', () => {
       fetchUsersList();
+      fetchSetores();
     });
 
     socket.on('ticket_shared_alert', (data) => {
@@ -1092,7 +1159,7 @@ export default function App() {
   }, []);
 
   // Colunas do ticket (sem attachments, que são pesados e vêm sob demanda)
-  const TICKET_COLS = 'id, title, description, setor_id, origin_setor_id, platform, status, urgency, ticket_type, responsible, delivery_date, created_by, created_at, updated_at, dev_notes, shared_with, open_pool, responsible_seen_at, finalized';
+  const TICKET_COLS = 'id, title, description, setor_id, origin_setor_id, origin_system_id, platform, status, urgency, ticket_type, responsible, delivery_date, created_by, created_at, updated_at, dev_notes, shared_with, open_pool, responsible_seen_at, finalized';
 
   async function fetchTickets() {
     try {
@@ -1155,6 +1222,16 @@ export default function App() {
     const s = seen[m.ticket_id];
     if (!s || new Date(m.created_at) > new Date(s)) unreadByTicket[m.ticket_id] = (unreadByTicket[m.ticket_id] || 0) + 1;
   }
+
+  // Conversas do usuário (bolha/inbox): tickets COM responsável em que ele é criador OU responsável.
+  const chatConversas = tickets.filter(t => t.responsible && (t.created_by === user?.id || t.responsible === user?.name || (Array.isArray(t.shared_with) && t.shared_with.includes(user?.id))));
+  // Última atividade por ticket → ordena a lista de conversas (msg mais recente no topo).
+  const lastMsgByTicket = {};
+  for (const m of msgMeta) {
+    const cur = lastMsgByTicket[m.ticket_id];
+    if (!cur || new Date(m.created_at) > new Date(cur)) lastMsgByTicket[m.ticket_id] = m.created_at;
+  }
+  const totalUnreadChat = chatConversas.reduce((s, t) => s + (unreadByTicket[t.id] || 0), 0);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -1258,6 +1335,7 @@ export default function App() {
           description: formData.description,
           setor_id: setorDestino,
           origin_setor_id: user?.setor_id || null, // setor de origem = setor de quem abriu
+          origin_system_id: user?.system_id || null, // sub-setor de origem = sub-setor de quem abriu (visibilidade de origem 'subsetor')
           platform: formData.platform || null, // id do sub-setor (só quando o setor ramifica)
           responsible: autoPool ? null : gerenteDoDestino(),
           open_pool: autoPool ? 1 : 0,
@@ -1594,8 +1672,8 @@ export default function App() {
     if (t) { requestOpenTicket(t); window.location.hash = ''; }
   }, [hash, user, tickets]);
 
-  // Visibilidade por hierarquia (setor/sub-setor). ponytail: regra client-side, como o resto do app.
-  const visibleTickets = tickets.filter(t => canSeeTicket(t, user, setoresList, systemsList));
+  // Visibilidade por hierarquia (setor/sub-setor + afiliados diretos). ponytail: regra client-side, como o resto do app.
+  const visibleTickets = tickets.filter(t => canSeeTicket(t, user, setoresList, systemsList, true, allUsers));
 
   const filteredTickets = visibleTickets.filter(t =>
     t.title.toLowerCase().includes(search.toLowerCase()) ||
@@ -1604,13 +1682,14 @@ export default function App() {
 
   // No Kanban, quem só ENVIOU (criou, sem atender o escopo) não vê o card — continua vendo na aba Tickets.
   // (includeOwn=false: ignora o "abri este ticket"; admin/escopo/compartilhado seguem valendo)
-  const kanbanTickets = filteredTickets.filter(t => canSeeTicket(t, user, setoresList, systemsList, false));
+  const kanbanTickets = filteredTickets.filter(t => canSeeTicket(t, user, setoresList, systemsList, false, allUsers));
   const pedidosCount = kanbanTickets.filter(t => t.status === 'backlog').length; // acumulado na coluna Pedidos (badge no menu Kanban)
 
-  // Aba "Ticket": admin vê TODOS; os demais veem só os que ENVIARAM (criaram). Recebidos ficam no Kanban.
+  // Aba "Ticket": admin vê TODOS; os demais veem os que ENVIARAM (criaram) + os que o SETOR/SUB-SETOR de
+  // origem enviou (conforme a política origin_visibility do setor). Recebidos ficam no Kanban.
   const enviadosTickets = user?.role === 'admin'
     ? filteredTickets
-    : filteredTickets.filter(t => t.created_by === user?.id);
+    : filteredTickets.filter(t => t.created_by === user?.id || seVePorOrigem(t, user, setoresList, systemsList));
 
   // Rota pública de redefinição de senha (link do e-mail)
   if (hash.startsWith('#/reset/')) {
@@ -1690,7 +1769,19 @@ export default function App() {
               transition={{ duration: 0.2 }}
               style={{ height: '100%', display: 'flex', flexDirection: 'column' }}
             >
-              {view === 'tickets' ? (
+              {view === 'chat' ? (
+                <ChatInboxPage
+                  conversas={chatConversas}
+                  user={user}
+                  allUsers={allUsers}
+                  setores={setoresList}
+                  systems={systemsList}
+                  unreadByTicket={unreadByTicket}
+                  lastMsgByTicket={lastMsgByTicket}
+                  onVisto={marcarVisto}
+                  onSair={() => setView('tickets')}
+                />
+              ) : view === 'tickets' ? (
                 <UserDashboard
                   tickets={enviadosTickets}
                   isLoading={loading}
@@ -1709,11 +1800,9 @@ export default function App() {
                 <UsersView user={user} onDeleteUser={handleDeleteUser} fetchUsers={fetchUsersList} allUsers={allUsers} setores={setoresList} systems={systemsList} />
               ) : view === 'setores' ? (
                 <SetoresView user={user} setores={setoresList} systems={systemsList} allUsers={allUsers} onUpdate={async () => {
-                  const { data: setData } = await api.from('setores').select('*').order('name');
-                  setSetoresList(setData || []);
-                  const { data: sysData } = await api.from('systems').select('*');
-                  if (sysData) setSystemsList(sysData);
+                  await fetchSetores();
                   await fetchUsersList(); // equipe (cargo/lotação) mudou → recarrega usuários
+                  socket.emit('users_changed'); // propaga config do setor (origin_visibility/auto_pool/equipe) em tempo real
                 }} />
               ) : view === 'kanban' ? (
                 <DevKanban
@@ -1752,6 +1841,22 @@ export default function App() {
         <AppFooter />
       </div>
 
+      {/* Bolha de conversas: em todas as telas, some quando a inbox (view 'chat') está aberta */}
+      {user && view !== 'chat' && (
+        <button
+          onClick={() => { setChatTicket(null); setViewingTicket(null); setView('chat'); playSound('open'); }}
+          title="Conversas"
+          style={{ position: 'fixed', right: '1.5rem', bottom: '1.5rem', zIndex: 1200, width: '58px', height: '58px', borderRadius: '50%', border: 'none', cursor: 'pointer', background: 'var(--primary)', color: '#fff', boxShadow: '0 8px 24px rgba(0,0,0,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        >
+          <MessageSquare size={24} />
+          {totalUnreadChat > 0 && (
+            <span style={{ position: 'absolute', top: '-4px', right: '-4px', minWidth: '22px', height: '22px', padding: '0 6px', borderRadius: '999px', background: '#ef4444', color: '#fff', fontSize: '0.72rem', fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid var(--surface)' }}>
+              {totalUnreadChat > 99 ? '99+' : totalUnreadChat}
+            </span>
+          )}
+        </button>
+      )}
+
       <AnimatePresence>
         {isModalOpen && (
           <TicketModal
@@ -1774,8 +1879,10 @@ export default function App() {
         <AcceptGateModal
           ticket={acceptGate}
           puxar={!isManager(user?.role)}
-          colaboradores={colaboradoresDoSetor(acceptGate.setor_id, setoresList, systemsList, allUsers)
-            .map(id => allUsers.find(u => u.id === id)?.name).filter(n => n && n !== user?.name)}
+          colaboradores={(user?.role === 'admin'
+            ? colaboradoresDoSetor(acceptGate.setor_id, setoresList, systemsList, allUsers).map(id => allUsers.find(u => u.id === id))
+            : afiliadosDe(user?.id, allUsers)               // gerente/resp: só direciona p/ seus afiliados diretos
+          ).map(u => u?.name).filter(n => n && n !== user?.name)}
           onAccept={() => aceitarDoGate(acceptGate)}
           onEncaminhar={(nome) => encaminharDoGate(acceptGate, nome)}
           onAbrirSetor={() => abrirSetorDoGate(acceptGate)}
@@ -1982,9 +2089,12 @@ function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, onTi
                       </span>
                     )}
                   </div>
-                  <div style={{ display: 'flex', gap: '12px' }}>
+                  <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', rowGap: '4px' }}>
                     <div className="card-info-row">
                       <LayoutDashboard size={12} /> {ticketDestino(ticket, setores, systems)}
+                    </div>
+                    <div className="card-info-row" title="Quem abriu o chamado">
+                      <UserPlus size={12} /> enviado por {allUsers.find(u => u.id === ticket.created_by)?.name || '—'}
                     </div>
                     <div className="card-info-row">
                       <UserIcon size={12} /> {ticket.responsible_seen_at ? `visualizado ${tempoRelativo(ticket.responsible_seen_at)}` : 'não visualizado'}
@@ -2029,7 +2139,7 @@ function UserDashboard({ tickets, onOpenModal, search, setSearch, onDelete, onTi
                 </div>
 
                 <div style={{ textAlign: 'right', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  {ticket.finalized && (
+                  {!!ticket.finalized && (
                     <span style={{ background: 'rgba(16,185,129,0.15)', color: '#10b981', padding: '3px 8px', borderRadius: '6px', fontSize: '0.65rem', fontWeight: 800, textTransform: 'uppercase' }}>
                       ✓ Finalizado
                     </span>
@@ -2197,16 +2307,57 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
   const meusSubsetores = ehAdmin ? systems : systems.filter(s => leadSystemIds(user, systems).includes(s.id));
   const podeGerenciarColunas = ehAdmin || meusSetores.length > 0 || meusSubsetores.length > 0;
 
-  const setorIdsBoard = new Set(visibleTickets.map(t => t.setor_id).filter(x => x != null));
-  const systemIdsBoard = new Set(visibleTickets.map(t => String(t.platform)).filter(Boolean));
-  const custom = [];
-  setores.forEach(s => { if (setorIdsBoard.has(s.id) || meusSetores.some(m => m.id === s.id)) (Array.isArray(s.colunas) ? s.colunas : []).forEach(c => custom.push({ ...c, _tipo: 'setores', _ownerId: s.id })); });
-  systems.forEach(s => { if (systemIdsBoard.has(String(s.id)) || meusSubsetores.some(m => m.id === s.id)) (Array.isArray(s.colunas) ? s.colunas : []).forEach(c => custom.push({ ...c, _tipo: 'systems', _ownerId: s.id })); });
+  // --- Escopo dos filtros do Kanban por papel ---
+  const ehFunc = user?.role === 'funcionario';
+  const meuSetorIds = meusSetores.map(s => s.id);   // setores que ele lidera (admin = todos)
+  const meuSubIds = meusSubsetores.map(s => s.id);  // sub-setores que ele lidera
+  // Sub-setores no filtro: admin = todos; funcionário = só os que ele tem acesso; gerente/resp = só do seu escopo.
+  const subsFiltro = ehAdmin ? systems
+    : ehFunc ? systems.filter(sy => userSystemIds(user).includes(String(sy.id)))
+    : systems.filter(sy => meuSetorIds.includes(sy.setor_id) || meuSubIds.includes(sy.id));
+  const subIdsEscopo = new Set(subsFiltro.map(s => String(s.id)));
+  // Com um único sub-setor no escopo, já o seleciona (mostra qual está visualizando e carrega as colunas dele).
+  useEffect(() => {
+    if (subsFiltro.length === 1 && !filterPlatform) setFilterPlatform(String(subsFiltro[0].id));
+  }, [subsFiltro.length, filterPlatform]);
+  // Responsáveis no filtro: funcionário não vê; admin = todos; gerente/resp = só os do seu escopo.
+  const respsFiltro = ehAdmin ? allUsers.filter(u => isManager(u.role))
+    : allUsers.filter(u => isManager(u.role) && (
+        (u.role === 'gerente' && meuSetorIds.includes(u.setor_id)) ||
+        (u.role === 'responsavel_subsetor' && subIdsEscopo.has(String(u.system_id)))
+      ));
+
+  // Regras das colunas custom no board:
+  //  - Sub-setor selecionado → colunas do sub-setor + do setor pai.
+  //  - Nenhum sub-setor no escopo (setor sem sub-setores) → colunas personalizadas do próprio setor.
+  //  - Há sub-setores mas nenhum selecionado → só as 4 fixas (evita bagunça); tickets em coluna custom colapsam em "Resolvendo".
+  const subSelecionado = filterPlatform ? systems.find(s => String(s.id) === String(filterPlatform)) : null;
+  let customBrutas = [];
+  if (subSelecionado) {
+    const setorPai = setores.find(s => String(s.id) === String(subSelecionado.setor_id));
+    const doSub = (Array.isArray(subSelecionado.colunas) ? subSelecionado.colunas : []).map(c => ({ ...c, _tipo: 'systems', _ownerId: subSelecionado.id }));
+    const doSetor = (Array.isArray(setorPai?.colunas) ? setorPai.colunas : []).map(c => ({ ...c, _tipo: 'setores', _ownerId: setorPai.id }));
+    customBrutas = [...doSub, ...doSetor];
+  } else if (subsFiltro.length === 0) {
+    // Setor sem sub-setores: mostra as colunas do(s) setor(es) do usuário (com ticket visível ou que ele lidera).
+    const setorIdsBoard = new Set(visibleTickets.map(t => t.setor_id).filter(x => x != null).map(String));
+    setores.forEach(s => {
+      if (setorIdsBoard.has(String(s.id)) || meusSetores.some(m => m.id === s.id)) {
+        (Array.isArray(s.colunas) ? s.colunas : []).forEach(c => customBrutas.push({ ...c, _tipo: 'setores', _ownerId: s.id }));
+      }
+    });
+  }
   const vistos = new Set();
-  const customUnicas = custom.filter(c => !vistos.has(c.id) && vistos.add(c.id));
+  const customUnicas = customBrutas.filter(c => !vistos.has(c.id) && vistos.add(c.id));
   const idxResolvido = DEV_STATUS.findIndex(c => c.id === 'resolvido');
   const colunas = [...DEV_STATUS.slice(0, idxResolvido), ...customUnicas, ...DEV_STATUS.slice(idxResolvido)];
   const idsCustom = new Set(customUnicas.map(c => c.id));
+  const idsVisiveis = new Set(colunas.map(c => c.id));
+  const FIXED_STATUS_IDS = new Set([...DEV_STATUS.map(s => s.id), ...OTHER_STATUS.map(s => s.id)]);
+  const isCustomStatus = (st) => !!st && !FIXED_STATUS_IDS.has(st);
+  // Etapa colapsada: ticket numa coluna custom que NÃO está visível agora → é exibido em "Resolvendo".
+  const ehEtapaColapsada = (t) => isCustomStatus(t.status) && !idsVisiveis.has(t.status);
+  const colunaVisualDoTicket = (t) => ehEtapaColapsada(t) ? 'resolvendo' : t.status;
   const podeArrastar = (id) => DRAG_STAGES.includes(id) || idsCustom.has(id);
 
   const handleDragStart = (e, ticket) => {
@@ -2223,7 +2374,7 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
     if (!draggedTicket || !podeArrastar(columnId)) return;
     e.preventDefault();
     const ticketId = e.dataTransfer.getData('ticketId');
-    if (ticketId && draggedTicket.status !== columnId) onUpdateStatus(ticketId, columnId);
+    if (ticketId && colunaVisualDoTicket(draggedTicket) !== columnId) onUpdateStatus(ticketId, columnId);
     setDraggedTicket(null);
     setDropTarget(null);
   };
@@ -2266,18 +2417,22 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
             onChange={(e) => setFilterSearch(e.target.value)}
           />
         </div>
-        <select style={{ flex: '0 0 160px', margin: 0 }} value={filterPlatform} onChange={e => setFilterPlatform(e.target.value)}>
-          <option value="">Sub-Setores</option>
-          {systems.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
+        {subsFiltro.length > 0 && (
+          <select style={{ flex: '0 0 160px', margin: 0 }} value={filterPlatform} onChange={e => setFilterPlatform(e.target.value)}>
+            {subsFiltro.length > 1 && <option value="">Sub-Setores</option>}
+            {subsFiltro.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        )}
         <select style={{ flex: '0 0 160px', margin: 0 }} value={filterUrgency} onChange={e => setFilterUrgency(e.target.value)}>
           <option value="">Urgência</option>
           {URGENCY_LEVELS.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
         </select>
-        <select style={{ flex: '0 0 160px', margin: 0 }} value={filterResponsible} onChange={e => setFilterResponsible(e.target.value)}>
-          <option value="">Responsável</option>
-          {allUsers.filter(u => isManager(u.role)).map(u => <option key={u.id} value={u.name}>{u.name}</option>)}
-        </select>
+        {!ehFunc && (
+          <select style={{ flex: '0 0 160px', margin: 0 }} value={filterResponsible} onChange={e => setFilterResponsible(e.target.value)}>
+            <option value="">Responsável</option>
+            {respsFiltro.map(u => <option key={u.id} value={u.name}>{u.name}</option>)}
+          </select>
+        )}
         {podeGerenciarColunas && (
           <button className="btn btn-ghost" style={{ flex: '0 0 auto', margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}
             onClick={() => setNovaColuna({ alvo: '', nome: '', cor: '#6366f1' })} title="Criar coluna personalizada no seu setor/sub-setor">
@@ -2301,7 +2456,7 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
         ) : (
           colunas.map(column => {
             const cs = columnSort[column.id];
-            const columnTickets = maximaPrimeiro(sortColumn(visibleTickets.filter(t => t.status === column.id), cs?.key, cs?.dir));
+            const columnTickets = maximaPrimeiro(sortColumn(visibleTickets.filter(t => colunaVisualDoTicket(t) === column.id), cs?.key, cs?.dir));
             const isTarget = dropTarget === column.id;
             const ehCustom = idsCustom.has(column.id);
             const souDono = ehAdmin || (column._tipo === 'setores' ? meusSetores.some(m => m.id === column._ownerId) : meusSubsetores.some(m => m.id === column._ownerId));
@@ -2371,7 +2526,7 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', marginBottom: '4px', alignItems: 'center', flexWrap: 'nowrap', height: '20px' }}>
                           <span style={{ color: 'var(--primary)', fontWeight: '700', flexShrink: 0 }}>#{ticket.id}</span>
                           <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexShrink: 0, whiteSpace: 'nowrap' }}>
-                            {ticket.finalized && (
+                            {!!ticket.finalized && (
                               <span style={{ background: 'rgba(16,185,129,0.15)', color: '#10b981', padding: '2px 6px', borderRadius: '4px', fontSize: '0.6rem', fontWeight: '800', textTransform: 'uppercase' }}>
                                 ✓ Finalizado
                               </span>
@@ -2393,6 +2548,14 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
                         </div>
                         {/* Título fixo em 2 linhas → mesma altura com título curto ou longo */}
                         <h4 style={{ fontSize: '0.9rem', fontWeight: '600', marginBottom: '8px', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: '1.2em', minHeight: '2.4em' }}>{ticket.title}</h4>
+                        {ehEtapaColapsada(ticket) && (() => {
+                          const et = statusInfo(ticket.status, setores, systems);
+                          return (
+                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', marginBottom: '8px', padding: '2px 8px', borderRadius: '999px', fontSize: '0.62rem', fontWeight: 800, textTransform: 'uppercase', background: (et.color || '#6366f1') + '22', color: et.color || '#6366f1' }} title="Etapa do sub-setor (selecione o sub-setor para gerenciar)">
+                              <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: et.color || '#6366f1' }} /> Etapa: {et.name}
+                            </div>
+                          );
+                        })()}
                         {/* Tipo e Prazo SEMPRE presentes com ALTURA FIXA (placeholder quando vazio) → todos os cards idênticos */}
                         <div style={{ display: 'flex', alignItems: 'center', height: '22px', marginBottom: '8px', overflow: 'hidden' }}>
                           {ticket.ticket_type ? <TipoBadge ticket={ticket} /> : <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>Sem tipo</span>}
@@ -2401,7 +2564,10 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
                           <Calendar size={12} /> {ticket.delivery_date ? `Entrega ${fmtDataPura(ticket.delivery_date)}${overdue ? ' • vencido' : ''}` : 'Sem prazo definido'}
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{fmtDataHoraSP(ticket.created_at, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                          <span style={{ display: 'flex', flexDirection: 'column', gap: '2px', fontSize: '0.65rem', color: 'var(--text-muted)' }}>
+                            <span>{fmtDataHoraSP(ticket.created_at, { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                            <span title="Quem abriu o chamado" style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}><UserPlus size={10} /> {allUsers.find(u => u.id === ticket.created_by)?.name || '—'}</span>
+                          </span>
 
                           <div className="kanban-card-responsible">
                             <div className="responsible-name">{donoVisivel(ticket) || 'Aguardando aceite'}</div>
@@ -2426,7 +2592,7 @@ function DevKanban({ tickets, onUpdateStatus, onUpdateUrgency, user, onTicketCli
         {sortModal && (
           <ColumnSortModal
             columnName={colunas.find(c => c.id === sortModal)?.name}
-            tickets={visibleTickets.filter(t => t.status === sortModal)}
+            tickets={visibleTickets.filter(t => colunaVisualDoTicket(t) === sortModal)}
             initialKey={columnSort[sortModal]?.key}
             initialDir={columnSort[sortModal]?.dir}
             onApply={(key, dir) => { setColumnSort(prev => ({ ...prev, [sortModal]: { key, dir } })); setSortModal(null); playSound('success'); }}
@@ -2544,7 +2710,38 @@ function TicketChat({ ticket, user, allUsers = [], fill = false }) {
   const [preview, setPreview] = useState(null); // mídia aberta em tela cheia
   const [loadedAnexos, setLoadedAnexos] = useState({}); // {msgId: [{url,type,name}]} carregados sob demanda
   const [carregandoAnx, setCarregandoAnx] = useState({}); // {msgId: true} enquanto busca a mídia
-  const canPost = user?.id === ticket.created_by || user?.name === ticket.responsible;
+  const [mencaoQuery, setMencaoQuery] = useState(null); // texto após o "@" (autocomplete); null = fechado
+
+  // Participantes da conversa = criador + responsável + compartilhados (shared_with)
+  const shared = Array.isArray(ticket.shared_with) ? ticket.shared_with : [];
+  const respId = allUsers.find(u => u.name === ticket.responsible)?.id;
+  const participantesIds = [...new Set([ticket.created_by, respId, ...shared].filter(v => v != null))];
+  const participantes = participantesIds.map(id => allUsers.find(u => u.id === id)).filter(Boolean);
+  const canPost = participantesIds.includes(user?.id);
+  // sugestões da @menção (participantes, menos eu, casando o texto após @)
+  const mencaoSugestoes = mencaoQuery == null ? []
+    : participantes.filter(u => u.id !== user?.id && u.name.toLowerCase().includes(mencaoQuery.toLowerCase())).slice(0, 6);
+  const onChangeMsg = (e) => {
+    const v = e.target.value; setNovaMsg(v);
+    const m = v.match(/@([\wÀ-ÿ]{0,24})$/); // "@token" no fim do texto → abre o autocomplete
+    setMencaoQuery(m ? m[1] : null);
+  };
+  const escolherMencao = (u) => {
+    setNovaMsg(prev => prev.replace(/@[\wÀ-ÿ]*$/, '@' + u.name + ' '));
+    setMencaoQuery(null);
+  };
+  // Realça @Nome (de participantes) no texto da mensagem
+  const nomesParticipantes = participantes.map(p => p.name);
+  const renderMensagem = (txt) => {
+    if (!txt || !nomesParticipantes.length) return txt;
+    const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp('(@(?:' + nomesParticipantes.map(esc).join('|') + '))', 'g');
+    return txt.split(re).map((part, i) =>
+      part.startsWith('@') && nomesParticipantes.includes(part.slice(1))
+        ? <strong key={i} style={{ color: 'var(--primary)' }}>{part}</strong>
+        : <span key={i}>{part}</span>
+    );
+  };
 
   const fetchMessages = async () => {
     // NÃO puxa o base64 dos anexos aqui (um vídeo pode ter dezenas de MB e travar o chat).
@@ -2600,13 +2797,16 @@ function TicketChat({ ticket, user, allUsers = [], fill = false }) {
     setEnviando(false);
     if (error) { toast.error('Erro ao enviar mensagem.'); setNovaMsg(txt); setAnexos(anexosEnvio); return; }
     await fetchMessages();
-    // avisa o outro lado (criador ↔ responsável) — socket + e-mail (evento "nova_mensagem")
-    const destino = user.id === ticket.created_by ? allUsers.find(u => u.name === ticket.responsible)?.id : ticket.created_by;
-    socket.emit('ticket_message', { ticketId: ticket.id, from: user.name, toUserId: destino });
-    const destinoUser = allUsers.find(u => u.id === destino);
-    if (destinoUser?.email) {
+    // Notifica TODOS os outros participantes (criador + responsável + compartilhados) — socket + e-mail.
+    const outros = participantes.filter(u => u.id !== user.id);
+    outros.forEach(d => socket.emit('ticket_message', { ticketId: ticket.id, from: user.name, toUserId: d.id }));
+    // @menções: participantes citados no texto recebem alerta direcionado
+    outros.filter(u => txt.includes('@' + u.name)).forEach(u =>
+      socket.emit('mention_created', { ticketId: ticket.id, mentioned: u.name, toUserId: u.id, from: user.name }));
+    const emails = outros.map(u => u.email).filter(Boolean);
+    if (emails.length) {
       fetch('/api/notify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-        to: [destinoUser.email],
+        to: emails,
         subject: `Nova mensagem na demanda #${ticket.id}`,
         email: {
           cabecalho: 'Nova Mensagem', icone: '💬', ticketId: ticket.id,
@@ -2632,7 +2832,7 @@ function TicketChat({ ticket, user, allUsers = [], fill = false }) {
       <div className="hide-scrollbar" style={threadStyle}>
         {messages.length === 0 && (
           <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic', textAlign: 'center', padding: '0.5rem 0' }}>
-            {canPost ? 'Sem mensagens ainda. Peça ou envie detalhes abaixo.' : 'Sem mensagens ainda. Só o solicitante e o responsável conversam aqui.'}
+            {canPost ? 'Sem mensagens ainda. Peça ou envie detalhes abaixo.' : 'Sem mensagens ainda. Conversam aqui o solicitante, o responsável e quem o ticket for compartilhado.'}
           </p>
         )}
         {messages.map(m => {
@@ -2677,7 +2877,7 @@ function TicketChat({ ticket, user, allUsers = [], fill = false }) {
                   background: meu ? 'var(--primary)' : 'rgba(0,0,0,0.05)', color: meu ? 'white' : 'var(--text-main)',
                   borderTopRightRadius: meu ? '2px' : '12px', borderTopLeftRadius: meu ? '12px' : '2px'
                 }}>
-                  {m.message}
+                  {renderMensagem(m.message)}
                 </div>
               )}
             </div>
@@ -2703,6 +2903,18 @@ function TicketChat({ ticket, user, allUsers = [], fill = false }) {
               ))}
             </div>
           )}
+          {mencaoSugestoes.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginBottom: '6px', border: '1px solid var(--glass-border)', borderRadius: '10px', overflow: 'hidden', background: 'var(--surface)' }}>
+              <div style={{ fontSize: '0.62rem', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 700, padding: '6px 10px 2px' }}>Mencionar</div>
+              {mencaoSugestoes.map(u => (
+                <button key={u.id} type="button" onClick={() => escolherMencao(u)}
+                  style={{ display: 'flex', alignItems: 'center', gap: '8px', textAlign: 'left', padding: '7px 10px', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: '0.82rem', color: 'var(--text-main)' }}>
+                  <span style={{ width: '24px', height: '24px', borderRadius: '50%', background: 'var(--primary)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '0.7rem' }}>{getInitials(u.name)}</span>
+                  @{u.name}
+                </button>
+              ))}
+            </div>
+          )}
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <input type="file" id={`chat-file-${ticket.id}`} className="hidden" multiple accept="image/*,video/*" onChange={handleFiles} />
             <label htmlFor={`chat-file-${ticket.id}`} className="icon-btn" title="Anexar imagem ou vídeo" style={{ flex: '0 0 auto', cursor: 'pointer' }}>
@@ -2710,9 +2922,15 @@ function TicketChat({ ticket, user, allUsers = [], fill = false }) {
             </label>
             <input
               value={novaMsg}
-              onChange={e => setNovaMsg(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); enviarMsg(); } }}
-              placeholder="Escreva uma mensagem..."
+              onChange={onChangeMsg}
+              onKeyDown={e => {
+                if (e.key === 'Escape') { setMencaoQuery(null); return; }
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  if (mencaoSugestoes.length) escolherMencao(mencaoSugestoes[0]); else enviarMsg();
+                }
+              }}
+              placeholder="Escreva uma mensagem…  (@ para marcar alguém)"
               style={{ flex: 1, margin: 0, fontSize: '0.85rem' }}
             />
             <button className="btn btn-primary" style={{ flex: '0 0 auto' }} onClick={enviarMsg} disabled={enviando || preparandoAnexos}>
@@ -2758,6 +2976,110 @@ function TicketChatPage({ ticket, user, allUsers = [], setores = [], systems = [
       </div>
       <div className="glass" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: '1.25rem', border: '1px solid var(--glass-border)' }}>
         <TicketChat ticket={ticket} user={user} allUsers={allUsers} fill />
+      </div>
+    </motion.div>
+  );
+}
+
+// Inbox de conversas estilo WhatsApp Web: lista à esquerda, chat à direita.
+// Mobile (via CSS .chat-inbox): só a lista; ao selecionar mostra o chat com seta Voltar.
+function ChatInboxPage({ conversas = [], user, allUsers = [], setores = [], systems = [], unreadByTicket = {}, lastMsgByTicket = {}, onVisto, onSair }) {
+  const [selId, setSelId] = useState(null);
+  const [aba, setAba] = useState('ativas'); // 'ativas' | 'arquivadas' (ticket finalizado = arquivado)
+
+  // outro participante da conversa (quem NÃO é o usuário atual)
+  const outroLado = (t) => {
+    if (user?.id === t.created_by) return allUsers.find(u => u.name === t.responsible) || { name: t.responsible || '—' };
+    return allUsers.find(u => u.id === t.created_by) || { name: '—' };
+  };
+  const criadorNome = (t) => allUsers.find(u => u.id === t.created_by)?.name || '—'; // quem abriu o ticket
+
+  // ordena por última atividade (msg mais recente primeiro; sem msg vai pelo id desc)
+  const ordenadas = [...conversas].sort((a, b) => {
+    const ta = lastMsgByTicket[a.id], tb = lastMsgByTicket[b.id];
+    if (ta && tb) return new Date(tb) - new Date(ta);
+    if (ta) return -1; if (tb) return 1;
+    return b.id - a.id;
+  });
+
+  // Arquivadas = tickets finalizados; ativas = o resto.
+  const ativas = ordenadas.filter(t => !t.finalized);
+  const arquivadas = ordenadas.filter(t => !!t.finalized);
+  const visiveis = aba === 'arquivadas' ? arquivadas : ativas;
+
+  const sel = ordenadas.find(t => t.id === selId) || null;
+  const abrir = (t) => { setSelId(t.id); onVisto && onVisto(t.id); };
+  const tabStyle = (on) => ({ flex: 1, padding: '6px 8px', borderRadius: '8px', fontSize: '0.74rem', fontWeight: 700, cursor: 'pointer', border: `1px solid ${on ? 'var(--primary)' : 'var(--glass-border)'}`, background: on ? 'rgba(99,102,241,0.12)' : 'transparent', color: on ? 'var(--primary)' : 'var(--text-muted)' });
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} style={{ height: '100%', display: 'flex', flexDirection: 'column', width: '100%' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '1rem', flex: '0 0 auto' }}>
+        <button className="icon-btn" onClick={onSair} title="Fechar"><ArrowLeft size={20} /></button>
+        <h2 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <MessageSquare size={22} color="var(--primary)" /> Conversas
+        </h2>
+      </div>
+
+      <div className={`chat-inbox${sel ? ' has-selection' : ''}`} style={{ flex: 1, minHeight: 0 }}>
+        {/* Lista de conversas */}
+        <div className="ci-list glass" style={{ padding: '0.5rem', border: '1px solid var(--glass-border)' }}>
+          <div style={{ display: 'flex', gap: '6px', marginBottom: '6px' }}>
+            <button type="button" onClick={() => setAba('ativas')} style={tabStyle(aba === 'ativas')}>Ativas{ativas.length ? ` (${ativas.length})` : ''}</button>
+            <button type="button" onClick={() => setAba('arquivadas')} style={tabStyle(aba === 'arquivadas')}>Arquivadas{arquivadas.length ? ` (${arquivadas.length})` : ''}</button>
+          </div>
+          {visiveis.length === 0 && (
+            <div style={{ padding: '2rem 1rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>{aba === 'arquivadas' ? 'Nenhuma conversa arquivada.' : 'Nenhuma conversa ativa.'}</div>
+          )}
+          {visiveis.map(t => {
+            const o = outroLado(t);
+            const un = unreadByTicket[t.id] || 0;
+            const ativo = sel?.id === t.id;
+            return (
+              <button key={t.id} onClick={() => abrir(t)}
+                style={{ width: '100%', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: '10px', border: 'none', cursor: 'pointer', background: ativo ? 'rgba(99,102,241,0.12)' : 'transparent' }}>
+                <div style={{ width: '40px', height: '40px', flexShrink: 0, borderRadius: '50%', background: 'var(--primary)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '0.9rem' }}>{getInitials(o.name)}</div>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '6px' }}>
+                    <span style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-main)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.title}</span>
+                    {lastMsgByTicket[t.id] && <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', flexShrink: 0 }}>{tempoRelativo(lastMsgByTicket[t.id])}</span>}
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '6px', alignItems: 'center' }}>
+                    <span style={{ fontSize: '0.76rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>#{t.id} · {o.name}</span>
+                    {un > 0 && <span style={{ flexShrink: 0, minWidth: '18px', height: '18px', padding: '0 5px', borderRadius: '999px', background: '#ef4444', color: '#fff', fontSize: '0.65rem', fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{un}</span>}
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Chat da conversa selecionada (display/flex vem do CSS p/ o media query poder escondê-lo no mobile) */}
+        <div className="ci-chat glass" style={{ padding: '1rem', border: '1px solid var(--glass-border)' }}>
+          {sel ? (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', paddingBottom: '0.75rem', borderBottom: '1px solid var(--glass-border)', marginBottom: '0.75rem', flex: '0 0 auto' }}>
+                <button className="icon-btn ci-back" onClick={() => setSelId(null)} title="Voltar"><ArrowLeft size={18} /></button>
+                <div style={{ width: '38px', height: '38px', flexShrink: 0, borderRadius: '50%', background: 'var(--primary)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800 }}>{getInitials(sel.title)}</div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontWeight: 800, color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{sel.title}</span>
+                    {!!sel.finalized && <span style={{ flexShrink: 0, padding: '2px 8px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 800, textTransform: 'uppercase', background: 'rgba(100,116,139,0.15)', color: 'var(--text-muted)' }}>Arquivada</span>}
+                  </div>
+                  <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    #{sel.id} · Criado por {criadorNome(sel)}{Array.isArray(sel.shared_with) && sel.shared_with.length > 0 ? ` · +${sel.shared_with.length} no chat` : ''}
+                  </div>
+                </div>
+              </div>
+              <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                <TicketChat ticket={sel} user={user} allUsers={allUsers} fill />
+              </div>
+            </>
+          ) : (
+            <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '0.9rem', textAlign: 'center', padding: '2rem' }}>
+              Selecione uma conversa à esquerda.
+            </div>
+          )}
+        </div>
       </div>
     </motion.div>
   );
@@ -2848,12 +3170,7 @@ function TicketStatusModal({ ticket, setores = [], systems = [], user, allUsers 
           <AlignLeft size={16} /> Ver o que foi enviado
         </button>
 
-        {/* Conversa só existe depois que alguém ACEITA (há responsável); em backlog não aparece */}
-        {donoVisivel(ticket) && (
-          <button className="btn btn-primary" style={{ width: '100%', marginTop: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }} onClick={() => onOpenChat(ticket)}>
-            <MessageSquare size={16} /> Abrir conversa com o responsável
-          </button>
-        )}
+        {/* A conversa agora vive na bolha de Conversas (canto inferior direito), não mais aqui no ticket. */}
 
         {podeExcluir && (
           <button className="btn btn-ghost" style={{ width: '100%', marginTop: '0.75rem', color: '#ef4444', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }} onClick={() => onDelete && onDelete(ticket)}>
@@ -2898,7 +3215,7 @@ function AnaliseGateModal({ ticket, onConfirm, onViewDetails, onClose }) {
         </div>
         <div className="form-group" style={{ marginBottom: '1.5rem' }}>
           <label style={{ fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '6px' }}><Calendar size={14} /> Prazo de resolução</label>
-          <input type="date" min={hoje} value={date} onChange={e => setDate(e.target.value)} />
+          <input type="date" min={hoje} value={date} onChange={e => setDate(e.target.value)} onClick={e => e.target.showPicker?.()} onFocus={e => e.target.showPicker?.()} />
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <button className="btn btn-primary" style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }} onClick={() => {
@@ -2918,8 +3235,8 @@ function AnaliseGateModal({ ticket, onConfirm, onViewDetails, onClose }) {
 
 // --- Modal de Criação ---
 function TicketModal({ onClose, onSubmit, systems, setores = [], user, allUsers = [] }) {
-  // Destino só pode ser OUTRO setor: exclui o setor de origem (o de quem abre)
-  const setoresDestino = setores.filter(s => s.id != user?.setor_id);
+  // Destino pode ser qualquer setor, inclusive o próprio setor de quem abre.
+  const setoresDestino = setores;
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
@@ -3034,7 +3351,7 @@ function TicketModal({ onClose, onSubmit, systems, setores = [], user, allUsers 
 
           <div className="form-group">
             <label>Descrição</label>
-            <textarea rows="4" placeholder="Detalhes..." value={formData.description} onChange={e => setFormData({ ...formData, description: e.target.value })}></textarea>
+            <textarea rows="6" placeholder="Detalhes..." value={formData.description} onChange={e => setFormData({ ...formData, description: e.target.value })}></textarea>
           </div>
 
           <div className="form-group">
@@ -3157,8 +3474,10 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, setores = [], 
   // --- Atribuição flexível da demanda ---
   const [atribuirA, setAtribuirA] = useState('');
   const canAssign = podeAtribuir(user, ticket, setores); // gerente/resp. do setor (ou admin)
-  const colaboradores = colaboradoresDoSetor(ticket.setor_id, setores, systems, allUsers)
-    .map(id => allUsers.find(u => u.id === id)).filter(Boolean);
+  // Direciona só para os AFILIADOS diretos (admin dá pra qualquer colaborador do setor)
+  const colaboradores = (user?.role === 'admin'
+    ? colaboradoresDoSetor(ticket.setor_id, setores, systems, allUsers).map(id => allUsers.find(u => u.id === id)).filter(Boolean)
+    : afiliadosDe(user?.id, allUsers));
   // resolvedor no escopo pega demanda sem dono; o líder do setor tem o botão dedicado no bloco de direcionamento
   const podePegar = !ticket.responsible && isManager(user?.role) && !podeAtribuir(user, ticket, setores);
 
@@ -3251,9 +3570,22 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, setores = [], 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1rem 1.5rem', background: 'rgba(0,0,0,0.01)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 {asPage && <button className="icon-btn" onClick={onClose} title="Voltar"><ArrowLeft size={20} /></button>}
-                <div className="status-badge-header" style={{ color: statusInfo(ticket.status, setores, systems).color }}>
-                  {statusInfo(ticket.status, setores, systems).name}
-                </div>
+                {(() => {
+                  const fixos = [...DEV_STATUS, ...OTHER_STATUS].map(s => s.id);
+                  const ehCustom = ticket.status && !fixos.includes(ticket.status);
+                  const base = ehCustom ? DEV_STATUS.find(s => s.id === 'resolvendo') : statusInfo(ticket.status, setores, systems);
+                  const et = ehCustom ? statusInfo(ticket.status, setores, systems) : null;
+                  return (
+                    <>
+                      <div className="status-badge-header" style={{ color: base.color }}>{base.name}</div>
+                      {ehCustom && (
+                        <div className="status-badge-header" style={{ color: et.color, background: (et.color || '#6366f1') + '18' }}>
+                          Etapa: {et.name}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
                 <span style={{ fontSize: '0.85rem', fontWeight: '700', color: 'var(--primary)' }}>#{ticket.id}</span>
                 <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
                   criado por <b style={{ color: 'var(--text-main)' }}>{creator?.name || 'Usuário'}</b> em {fmtDataHoraSP(ticket.created_at, { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
@@ -3373,7 +3705,7 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, setores = [], 
                     {ticket.status === 'backlog' ? (
                       canManage ? (
                         <>
-                          <input type="date" min={hoje} value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} style={{ fontSize: '0.85rem', padding: '8px' }} />
+                          <input type="date" min={hoje} value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} onClick={e => e.target.showPicker?.()} onFocus={e => e.target.showPicker?.()} style={{ fontSize: '0.85rem', padding: '8px' }} />
                           <button className="btn btn-primary" style={{ width: '100%', marginTop: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }} onClick={handleAccept}>
                             <CheckSquare size={16} /> Aceitar ticket
                           </button>
@@ -3391,7 +3723,7 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, setores = [], 
                         {vencido && <p style={{ fontSize: '0.75rem', color: '#ef4444', margin: '4px 0 0' }}>Entrega vencida — defina uma nova data.</p>}
                         {podeEditarPrazo && (rescheduling || vencido || !ticket.delivery_date) ? (
                           <div style={{ marginTop: '8px' }}>
-                            <input type="date" min={hoje} value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} style={{ fontSize: '0.85rem', padding: '8px' }} />
+                            <input type="date" min={hoje} value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} onClick={e => e.target.showPicker?.()} onFocus={e => e.target.showPicker?.()} style={{ fontSize: '0.85rem', padding: '8px' }} />
                             <button className="btn btn-primary" style={{ width: '100%', marginTop: '8px', ...(vencido ? { background: '#ef4444', border: 'none' } : {}) }} onClick={handleReschedule}>
                               {vencido ? 'Reagendar entrega' : (ticket.delivery_date ? 'Atualizar prazo' : 'Definir prazo de entrega')}
                             </button>
@@ -3492,16 +3824,8 @@ function TicketDetailsModal({ ticket, onClose, onUpdate, systems, setores = [], 
                   )}
                 </div>
 
-                {/* Rodapé fixo: acessar chat + ação primária, sempre visíveis */}
+                {/* Rodapé fixo: ação primária (o chat foi p/ a bolha de Conversas). */}
                 <div style={{ flexShrink: 0, paddingTop: '1rem', marginTop: '0.75rem', borderTop: '1px solid var(--glass-border)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {onOpenChat && (
-                    <button className="btn btn-ghost" style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', position: 'relative' }} onClick={onOpenChat}>
-                      <MessageSquare size={16} /> Acessar Chat
-                      {unread > 0 && (
-                        <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: '20px', height: '20px', padding: '0 6px', borderRadius: '999px', background: '#4f46e5', color: '#fff', fontSize: '0.7rem', fontWeight: 800 }}>{unread}</span>
-                      )}
-                    </button>
-                  )}
                   <button className="btn btn-primary" style={{ width: '100%' }} onClick={() => {
                     // Definiu tipo + prazo enquanto em Backlog/Análise → avança para Resolvendo
                     let finalStatus = statusSel;
@@ -3977,17 +4301,69 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
   const setorNome = (id) => setores.find(s => s.id == id)?.name || '';
   const subSetorNome = (id) => systems.find(s => s.id == id)?.name || '';
   const dbUsers = allUsers || [];
+  const respNome = (id) => (dbUsers.find(u => u.id == id)?.name) || '';
+  const isAdmin = user?.role === 'admin';
+
+  // --- Minha equipe (gerente/responsável): funcionários que ELE cadastrou (responsavel_id = ele) ---
+  const meusSetorIds = leadSetorIds(user, setores);
+  const meusSystemIds = leadSystemIds(user, systems);
+  const minhaEquipe = dbUsers.filter(u => responsaveisDe(u).includes(String(user?.id)));
+  // setores que o líder pode atribuir ao membro: os que ele lidera + os que contêm um sub-setor dele
+  const setoresAtribuiveis = setores.filter(s => meusSetorIds.includes(s.id) || systems.some(sy => sy.setor_id === s.id && meusSystemIds.includes(sy.id)));
+  // sub-setores atribuíveis (só o gerente coloca o membro em sub-setores do seu setor)
+  const subsAtribuiveis = systems.filter(sy => meusSetorIds.includes(sy.setor_id) || meusSystemIds.includes(sy.id));
+  const linhas = isAdmin ? dbUsers : minhaEquipe; // admin vê todos; gerente/resp vê só a equipe dele
+  const [membroEdit, setMembroEdit] = useState(null); // membro sendo editado pelo líder (cargo/setores/senha)
+
+  const toggleBloqueio = async (u) => {
+    try {
+      const { error } = await api.from('users').update({ blocked: u.blocked ? 0 : 1 }).eq('id', u.id);
+      if (error) throw error;
+      toast.success(u.blocked ? 'Acesso liberado.' : 'Acesso bloqueado.');
+      parentFetchUsers();
+    } catch (e) { toast.error('Erro ao atualizar acesso: ' + (e.message || '')); }
+  };
+  // Salva cargo + setores/sub-setores em que atua + (opcional) senha do membro liderado
+  const salvarMembro = async ({ role, setorIds, systemIds, password }) => {
+    const setor_ids = (setorIds || []).map(Number);
+    const payload = { role, setor_ids, setor_id: setor_ids[0] ?? null };
+    if (systemIds) { // só quando o modal ofereceu sub-setores (líder gerente)
+      const system_ids = systemIds.map(Number);
+      payload.system_ids = system_ids;
+      payload.system_id = system_ids[0] ?? null;
+    }
+    if (password) payload.password = password;
+    try {
+      const { error } = await api.from('users').update(payload).eq('id', membroEdit.id);
+      if (error) throw error;
+      toast.success('Membro atualizado!');
+      setMembroEdit(null);
+      parentFetchUsers();
+    } catch (e) { toast.error('Erro ao salvar: ' + (e.message || '')); }
+  };
+
   const [loading, setLoading] = useState(false);
   const [isNewUserModalOpen, setIsNewUserModalOpen] = useState(false);
   const [isEditUserModalOpen, setIsEditUserModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
   const [novoSetorId, setNovoSetorId] = useState(''); // setor escolhido no modal Novo Membro (controla o dropdown de sub-setor)
   const [editSetorId, setEditSetorId] = useState(''); // idem no modal Editar Membro
+  const [editResps, setEditResps] = useState([]); // responsáveis do usuário em edição (admin) — principal + extras
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  // Ao abrir o modal de edição, carrega os responsáveis atuais (principal ∪ extras)
+  useEffect(() => {
+    if (editingUser) setEditResps(responsaveisDe(editingUser).map(Number));
+  }, [editingUser]);
+
+  // Candidatos a responsável: líderes (gerente/resp. sub-setor/admin), menos o próprio usuário
+  const responsavelCandidatos = dbUsers.filter(u =>
+    ['admin', 'gerente', 'responsavel_subsetor'].includes(u.role) && u.id !== editingUser?.id
+  );
 
   const handleCreateUser = async (e) => {
     e.preventDefault();
@@ -4017,6 +4393,10 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
     data.setor_id = data.setor_id ? Number(data.setor_id) : null;
     data.system_id = data.system_id ? Number(data.system_id) : null;
     if (!data.password) delete data.password; // em branco = mantém a senha atual
+    // Responsáveis (só admin edita): 1º = principal (responsavel_id), demais = extras (responsavel_ids)
+    const resps = [...new Set(editResps.map(Number))];
+    data.responsavel_id = resps[0] ?? null;
+    data.responsavel_ids = resps.slice(1);
     const { error } = await api.from('users').update(data).eq('id', editingUser.id);
     if (!error) { 
       toast.success('Dados atualizados!'); 
@@ -4039,7 +4419,7 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
           <h2 style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '1.75rem', fontWeight: '800' }}>
             <Users color="var(--primary)" size={28} /> Gestão de Equipe
           </h2>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginTop: '4px' }}>Gerencie permissões e visualize o status dos membros.</p>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginTop: '4px' }}>{isAdmin ? 'Gerencie permissões e visualize o status dos membros.' : 'Gerencie os funcionários que você cadastrou: cargo, setores e acesso.'}</p>
         </div>
         {user?.role === 'admin' && (
           <button className="btn btn-primary" onClick={() => { setNovoSetorId(''); setIsNewUserModalOpen(true); }}>
@@ -4055,12 +4435,18 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
               <tr style={{ background: 'rgba(0,0,0,0.015)', borderBottom: '1px solid var(--glass-border)' }}>
                 <th style={{ padding: '1.25rem', fontSize: '0.75rem', fontWeight: '800', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Membro</th>
                 <th style={{ padding: '1.25rem', fontSize: '0.75rem', fontWeight: '800', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Cargo</th>
+                <th style={{ padding: '1.25rem', fontSize: '0.75rem', fontWeight: '800', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Responsável</th>
                 <th style={{ padding: '1.25rem', fontSize: '0.75rem', fontWeight: '800', textTransform: 'uppercase', color: 'var(--text-muted)' }}>Status</th>
-                {user?.role === 'admin' && <th style={{ padding: '1.25rem', textAlign: 'right' }}>Ação</th>}
+                <th style={{ padding: '1.25rem', textAlign: 'right' }}>{isAdmin ? 'Ação' : 'Gerenciar'}</th>
               </tr>
             </thead>
             <tbody>
-              {dbUsers.map(u => (
+              {!isAdmin && linhas.length === 0 && (
+                <tr><td colSpan={5} style={{ padding: '2.5rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                  Você ainda não cadastrou nenhum funcionário. Gere um <strong>link de registro</strong> no menu <strong>Setores</strong>.
+                </td></tr>
+              )}
+              {linhas.map(u => (
                 <tr key={u.id} className="table-row-hover" style={{ borderBottom: '1px solid var(--glass-border)' }}>
                   <td style={{ padding: '1.25rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
@@ -4102,15 +4488,24 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
                       {ROLE_LABELS[u.role] || u.role}
                     </span>
                   </td>
+                  <td style={{ padding: '1.25rem', fontSize: '0.85rem' }}>
+                    {(() => {
+                      const nomes = responsaveisDe(u).map(id => respNome(id)).filter(Boolean);
+                      return nomes.length
+                        ? <span style={{ fontWeight: 600 }}>{nomes.join(', ')}</span>
+                        : <span style={{ color: 'var(--text-muted)' }}>—</span>;
+                    })()}
+                  </td>
                   <td style={{ padding: '1.25rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem' }}>
                       <span style={{ color: u.is_online ? '#10b981' : 'var(--text-muted)', fontWeight: '600' }}>
                         {u.is_online ? 'Disponível' : 'Ausente'}
                       </span>
+                      {u.blocked ? <span style={{ padding: '2px 8px', borderRadius: '999px', fontSize: '0.6rem', fontWeight: 800, textTransform: 'uppercase', background: 'rgba(239,68,68,0.15)', color: '#ef4444' }}>Bloqueado</span> : null}
                     </div>
                   </td>
-                  {user?.role === 'admin' && (
-                    <td style={{ padding: '1.25rem', textAlign: 'right' }}>
+                  <td style={{ padding: '1.25rem', textAlign: 'right' }}>
+                    {isAdmin ? (
                       <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
                         <button className="icon-btn" onClick={() => { setEditingUser(u); setEditSetorId(u.setor_id ?? ''); setIsEditUserModalOpen(true); playSound('click'); }} title="Editar Dados">
                           <Pencil size={16} />
@@ -4119,8 +4514,16 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
                           <Trash2 size={16} />
                         </button>
                       </div>
-                    </td>
-                  )}
+                    ) : (
+                      <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', alignItems: 'center' }}>
+                        <button className="icon-btn" onClick={() => setMembroEdit(u)} title="Editar cargo / setores / senha"><Pencil size={16} /></button>
+                        <button className="icon-btn" type="button" onClick={() => toggleBloqueio(u)} title={u.blocked ? 'Bloqueado — clique para liberar' : 'Bloquear acesso'}
+                          style={{ color: u.blocked ? '#ef4444' : 'var(--text-muted)' }}>
+                          <Lock size={16} />
+                        </button>
+                      </div>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -4196,13 +4599,127 @@ function UsersView({ user, onDeleteUser, fetchUsers: parentFetchUsers, allUsers,
                   </>
                 );
               })()}
+              <label style={{ fontSize: '0.75rem' }}>Responsáveis <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(quem lidera este usuário; pode ter mais de um)</span></label>
+              <select value="" onChange={e => {
+                const id = Number(e.target.value);
+                if (id && !editResps.includes(id)) setEditResps([...editResps, id]);
+                e.target.value = '';
+              }}>
+                <option value="">Adicionar responsável...</option>
+                {responsavelCandidatos.filter(u => !editResps.includes(u.id)).map(u => (
+                  <option key={u.id} value={u.id}>{u.name} ({ROLE_LABELS[u.role] || u.role})</option>
+                ))}
+              </select>
+              {editResps.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '2px' }}>
+                  {editResps.map((id, idx) => (
+                    <div key={id} style={{ display: 'flex', alignItems: 'center', gap: '5px', background: 'var(--primary)', color: 'white', padding: '3px 9px', borderRadius: '12px', fontSize: '0.72rem', fontWeight: 600 }}>
+                      {idx === 0 && <span title="Responsável principal" style={{ fontSize: '0.62rem', opacity: 0.85, textTransform: 'uppercase', fontWeight: 800 }}>principal</span>}
+                      {respNome(id) || `#${id}`}
+                      <X size={12} style={{ cursor: 'pointer' }} onClick={() => setEditResps(editResps.filter(x => x !== id))} />
+                    </div>
+                  ))}
+                </div>
+              )}
               <button type="submit" className="btn btn-primary" style={{ marginTop: '1rem' }}>Salvar Alterações</button>
             </form>
           </motion.div>
         </div>,
         document.body
       )}
+      {membroEdit && (
+        <MembroEditModal member={membroEdit} setoresAtribuiveis={setoresAtribuiveis} subsAtribuiveis={user?.role === 'gerente' ? subsAtribuiveis : null} onClose={() => setMembroEdit(null)} onSave={salvarMembro} />
+      )}
     </div>
+  );
+}
+
+// Modal do líder p/ editar um membro da equipe: cargo, setores (e sub-setores, se o líder é gerente) e senha.
+function MembroEditModal({ member, setoresAtribuiveis = [], subsAtribuiveis = null, onClose, onSave }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const iniciais = [member.setor_id, ...(Array.isArray(member.setor_ids) ? member.setor_ids : [])].filter(v => v != null).map(String);
+  const iniciaisSub = [member.system_id, ...(Array.isArray(member.system_ids) ? member.system_ids : [])].filter(v => v != null).map(String);
+  const [role, setRole] = useState(member.role || 'funcionario');
+  const [setorIds, setSetorIds] = useState(new Set(iniciais));
+  const [systemIds, setSystemIds] = useState(new Set(iniciaisSub));
+  const [password, setPassword] = useState('');
+  const [showPass, setShowPass] = useState(false);
+  if (!mounted) return null;
+  const toggle = (id) => setSetorIds(prev => { const n = new Set(prev); n.has(String(id)) ? n.delete(String(id)) : n.add(String(id)); return n; });
+  const toggleSub = (id) => setSystemIds(prev => { const n = new Set(prev); n.has(String(id)) ? n.delete(String(id)) : n.add(String(id)); return n; });
+  const cargos = ['funcionario', 'gerente', 'responsavel_subsetor'];
+  return createPortal(
+    <div className="overlay" style={{ alignItems: 'center', padding: '1rem' }} onClick={onClose}>
+      <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="glass modal" style={{ width: '440px', maxWidth: '94vw', padding: '1.75rem' }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.25rem' }}>
+          <div>
+            <span style={{ fontSize: '0.7rem', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 800, letterSpacing: '0.05em' }}>Editar membro</span>
+            <h3 style={{ margin: '2px 0 0', fontSize: '1.2rem', fontWeight: 800 }}>{member.name}</h3>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={20} /></button>
+        </div>
+
+        <div className="form-group">
+          <label style={{ fontSize: '0.75rem' }}>Cargo</label>
+          <select value={role} onChange={e => setRole(e.target.value)}>
+            {cargos.map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
+          </select>
+        </div>
+
+        <div className="form-group" style={{ marginTop: '1rem' }}>
+          <label style={{ fontSize: '0.75rem' }}>Setores em que atua</label>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px' }}>
+            {setoresAtribuiveis.length === 0 && <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>Nenhum setor disponível.</span>}
+            {setoresAtribuiveis.map(s => {
+              const on = setorIds.has(String(s.id));
+              return (
+                <button key={s.id} type="button" onClick={() => toggle(s.id)}
+                  style={{ padding: '5px 12px', borderRadius: '999px', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer',
+                    border: `1px solid ${on ? 'var(--primary)' : 'var(--glass-border)'}`,
+                    background: on ? 'rgba(99,102,241,0.12)' : 'transparent',
+                    color: on ? 'var(--primary)' : 'var(--text-muted)' }}>
+                  {on ? '✓ ' : ''}{s.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {Array.isArray(subsAtribuiveis) && subsAtribuiveis.length > 0 && (
+          <div className="form-group" style={{ marginTop: '1rem' }}>
+            <label style={{ fontSize: '0.75rem' }}>Sub-setores em que atua</label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px' }}>
+              {subsAtribuiveis.map(s => {
+                const on = systemIds.has(String(s.id));
+                return (
+                  <button key={s.id} type="button" onClick={() => toggleSub(s.id)}
+                    style={{ padding: '5px 12px', borderRadius: '999px', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer',
+                      border: `1px solid ${on ? 'var(--primary)' : 'var(--glass-border)'}`,
+                      background: on ? 'rgba(99,102,241,0.12)' : 'transparent',
+                      color: on ? 'var(--primary)' : 'var(--text-muted)' }}>
+                    {on ? '✓ ' : ''}{s.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <div className="form-group" style={{ marginTop: '1rem' }}>
+          <label style={{ fontSize: '0.75rem' }}>Nova senha <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(deixe em branco para manter)</span></label>
+          <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
+            <input type={showPass ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" style={{ flex: 1, margin: 0 }} />
+            <button type="button" className="btn btn-ghost" style={{ flex: '0 0 auto' }} onClick={() => setShowPass(v => !v)}>{showPass ? 'Ocultar' : 'Mostrar'}</button>
+          </div>
+        </div>
+
+        <button className="btn btn-primary" style={{ width: '100%', marginTop: '1.5rem' }} onClick={() => onSave({ role, setorIds: [...setorIds], systemIds: Array.isArray(subsAtribuiveis) ? [...systemIds] : undefined, password: password.trim() })}>
+          Salvar
+        </button>
+      </motion.div>
+    </div>,
+    document.body
   );
 }
 
@@ -4240,6 +4757,16 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
     } catch (e) { toast.error('Erro ao salvar a configuração.'); }
   };
 
+  // Altera a visibilidade de origem do setor (quem dos colegas de origem vê os chamados enviados por ele)
+  const setOriginVisibility = async (setor, modo) => {
+    try {
+      const { error } = await api.from('setores').update({ origin_visibility: modo }).eq('id', setor.id);
+      if (error) throw error;
+      toast.success('Visibilidade dos envios atualizada.');
+      onUpdate();
+    } catch (e) { toast.error('Erro ao salvar a configuração.'); }
+  };
+
   // Botão/indicador do auto_pool. canEdit → clicável (gerente/resp/admin); senão → só mostra quando ligado.
   const AutoPoolBtn = ({ table, entity, canEdit }) => {
     const on = !!entity.auto_pool;
@@ -4253,8 +4780,8 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
 
   // usuário pertence a esta entidade? (setor: setor_id direto sem sub-setor / sub-setor: system_id)
   const pertence = (u, table, entity) => table === 'setores'
-    ? (String(u.setor_id) === String(entity?.id) && u.system_id == null)
-    : (String(u.system_id) === String(entity?.id));
+    ? (userSetorIds(u).includes(String(entity?.id)) && userSystemIds(u).length === 0)
+    : userSystemIds(u).includes(String(entity?.id));
 
   const openModal = (type, table, entity = null, parentSetorId = null) => {
     setEditingTable(table);
@@ -4314,21 +4841,32 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
     if (!editingEntity?.id) { toast.error('Registro não identificado.'); return; }
     const table = editingTable, entity = editingEntity;
     const gerRole = table === 'setores' ? 'gerente' : 'responsavel_subsetor';
-    const parentSetor = table === 'systems' ? entity.setor_id : entity.id;
+    const isSub = table === 'systems';
+    const parentSetor = isSub ? entity.setor_id : entity.id;
     try {
       for (const u of allUsers) {
         const alvo = teamAssign[u.id]; // 'gerente' | 'funcionario' | undefined
         const estava = pertence(u, table, entity);
-        if (alvo) {
-          const role = alvo === 'gerente' ? gerRole : 'funcionario';
-          const setor_id = parentSetor;
-          const system_id = table === 'setores' ? null : entity.id;
-          const mudou = u.role !== role || String(u.setor_id ?? '') !== String(setor_id ?? '') || String(u.system_id ?? '') !== String(system_id ?? '');
-          if (mudou) await api.from('users').update({ role, setor_id, system_id }).eq('id', u.id);
-        } else if (estava) {
-          // removido desta equipe → tira a lotação (mantém o cargo global)
-          await api.from('users').update({ setor_id: null, system_id: null }).eq('id', u.id);
+        if (!alvo && !estava) continue;
+
+        // Lotação como UNIÃO: um funcionário pode atuar em vários setores/sub-setores sem perder os demais.
+        const subs = new Set(userSystemIds(u));  // ids (string) dos sub-setores onde já atua
+        const setrs = new Set(userSetorIds(u));  // ids (string) dos setores onde já atua
+        if (isSub) {
+          if (alvo) { subs.add(String(entity.id)); setrs.add(String(parentSetor)); }
+          else subs.delete(String(entity.id));
+        } else {
+          if (alvo) setrs.add(String(entity.id));
+          else setrs.delete(String(entity.id));
         }
+
+        const system_ids = [...subs].map(Number);
+        const setor_ids = [...setrs].map(Number);
+        const system_id = system_ids[0] ?? null; // primário = 1º da lista (mesmo padrão de "Minha equipe")
+        const setor_id = setor_ids[0] ?? null;
+        const role = alvo ? (alvo === 'gerente' ? gerRole : 'funcionario') : u.role; // remoção mantém o cargo global
+
+        await api.from('users').update({ role, setor_id, setor_ids, system_id, system_ids }).eq('id', u.id);
       }
       toast.success('Equipe salva!');
       closeModal();
@@ -4350,6 +4888,7 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
     }
   };
 
+  // (Gestão da equipe — "Minha equipe" — foi movida para o menu Usuários.)
 
   const RespChips = ({ list }) => (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
@@ -4385,14 +4924,17 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
         )}
       </div>
 
+
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
         {setoresVisiveis.map(setor => {
           const sistemasDoSetor = systems.filter(sys => sys.setor_id == setor.id);
           // Membros do setor (vinculados ao setor OU a um sub-setor dele), separados por cargo
           const subIds = new Set(sistemasDoSetor.map(s => String(s.id)));
-          const membros = allUsers.filter(u => String(u.setor_id) === String(setor.id) || (u.system_id != null && subIds.has(String(u.system_id))));
+          // Membro do setor = atua no setor (principal/extra) OU num sub-setor dele (principal/extra) — considera setor_ids/system_ids
+          const membros = allUsers.filter(u => userSetorIds(u).includes(String(setor.id)) || userSystemIds(u).some(sid => subIds.has(sid)));
           const gerentesSetor = membros.filter(u => u.role === 'gerente');
-          const funcsSetor = membros.filter(u => u.role === 'funcionario');
+          // "Funcionários do setor" = lotados DIRETO no setor (os de sub-setor aparecem no card do sub-setor)
+          const funcsSetor = membros.filter(u => u.role === 'funcionario' && !userSystemIds(u).some(sid => subIds.has(sid)));
           return (
             <motion.div layout key={setor.id} className="glass" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
               {/* Cabeçalho do setor: nome + GERENTE(s) à direita */}
@@ -4409,21 +4951,37 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
                       ? gerentesSetor.map(m => <ChipMembro key={m.id} m={m} />)
                       : <span style={{ fontStyle: 'italic', fontSize: '0.8rem', color: 'var(--text-muted)' }}>Sem gerente no setor</span>}
                   </div>
-                  {isAdmin && (
-                    <div style={{ display: 'flex', gap: '4px' }}>
-                      <button onClick={() => openModal('new_system', 'systems', null, setor.id)} className="icon-btn" title="Adicionar Sub-Setor"><Plus size={14} /></button>
-                      <button onClick={() => setLinkModal({ tipo: 'setor', target: setor })} className="icon-btn" title="Link de registro"><Link2 size={14} /></button>
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    {podeConfigSetor(setor) && <button onClick={() => openModal('new_system', 'systems', null, setor.id)} className="icon-btn" title="Adicionar Sub-Setor"><Plus size={14} /></button>}
+                    {podeConfigSetor(setor) && <button onClick={() => setLinkModal({ tipo: 'setor', target: setor })} className="icon-btn" title="Link de registro"><Link2 size={14} /></button>}
+                    {podeConfigSetor(setor) && <button onClick={() => openModal('manage_resps', 'setores', setor)} className="icon-btn" title="Equipe do Setor — adicionar/remover seus funcionários"><UserPlus size={14} /></button>}
+                    {isAdmin && <>
                       <button onClick={() => openModal('edit_name', 'setores', setor)} className="icon-btn" title="Editar Nome"><Pencil size={14} /></button>
-                      <button onClick={() => openModal('manage_resps', 'setores', setor)} className="icon-btn" title="Equipe do Setor"><UserPlus size={14} /></button>
                       <button onClick={() => openModal('delete_confirm', 'setores', setor)} className="icon-btn logout" title="Excluir Setor"><Trash2 size={14} /></button>
-                    </div>
-                  )}
+                    </>}
+                  </div>
                 </div>
               </div>
 
               {/* Config do setor: time pega a demanda (auto_pool) */}
-              {(podeConfigSetor(setor) || setor.auto_pool) && (
-                <div><AutoPoolBtn table="setores" entity={setor} canEdit={podeConfigSetor(setor)} /></div>
+              {(podeConfigSetor(setor) || !!setor.auto_pool) && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px' }}>
+                  <AutoPoolBtn table="setores" entity={setor} canEdit={podeConfigSetor(setor)} />
+                  {podeConfigSetor(setor) && (
+                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 600 }} title="Quem, entre os colegas de origem, acompanha na lista os chamados enviados por este setor">
+                      <UserPlus size={12} /> Quem vê os envios do setor:
+                      <select
+                        value={setor.origin_visibility || 'own'}
+                        onChange={e => setOriginVisibility(setor, e.target.value)}
+                        style={{ width: 'auto', margin: 0, padding: '4px 8px', fontSize: '0.7rem', borderRadius: '999px' }}
+                      >
+                        <option value="own">Só o autor</option>
+                        <option value="subsetor">Mesmo sub-setor de origem</option>
+                        <option value="setor">Todo o setor de origem</option>
+                      </select>
+                    </label>
+                  )}
+                </div>
               )}
 
               {/* Funcionários do setor */}
@@ -4440,10 +4998,12 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
               {sistemasDoSetor.length > 0 && (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>
                   {sistemasDoSetor.map(sys => {
-                    // Responsáveis do sub-setor = resp. sub-setor lotado nele (cargo+system_id) + primary_responsibles
+                    // Responsáveis do sub-setor = resp. sub-setor que atua nele (principal/extra) + primary_responsibles
                     const idsResp = new Set(Array.isArray(sys.primary_responsibles) ? sys.primary_responsibles : []);
-                    allUsers.forEach(u => { if (String(u.system_id) === String(sys.id) && u.role === 'responsavel_subsetor') idsResp.add(u.id); });
+                    allUsers.forEach(u => { if (u.role === 'responsavel_subsetor' && userSystemIds(u).includes(String(sys.id))) idsResp.add(u.id); });
                     const respsSub = [...idsResp].map(id => allUsers.find(u => u.id === id)).filter(Boolean);
+                    // Funcionários que atuam neste sub-setor (principal/extra)
+                    const funcsSub = allUsers.filter(u => u.role === 'funcionario' && userSystemIds(u).includes(String(sys.id)));
                     return (
                     <div key={sys.id} style={{ padding: '1rem', borderRadius: '12px', border: '1px solid var(--glass-border)', background: 'rgba(0,0,0,0.02)', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
@@ -4457,19 +5017,26 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
                                 ? <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>via gerente do setor</span>
                                 : <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>Sem responsável</span>)}
                         </div>
-                        {isAdmin && (
-                          <div style={{ display: 'flex', gap: '2px', flexShrink: 0 }}>
-                            <button onClick={() => setLinkModal({ tipo: 'categoria', target: sys })} className="icon-btn" title="Link de registro"><Link2 size={12} /></button>
-                            <button onClick={() => openModal('edit_name', 'systems', sys)} className="icon-btn" title="Editar Nome"><Pencil size={12} /></button>
-                            <button onClick={() => openModal('manage_resps', 'systems', sys)} className="icon-btn" title="Responsáveis"><UserPlus size={12} /></button>
-                            <button onClick={() => openModal('delete_confirm', 'systems', sys)} className="icon-btn logout" title="Excluir"><Trash2 size={12} /></button>
-                          </div>
-                        )}
+                        <div style={{ display: 'flex', gap: '2px', flexShrink: 0 }}>
+                          {(podeConfigSetor(setor) || podeConfigSub(sys)) && <button onClick={() => setLinkModal({ tipo: 'categoria', target: sys })} className="icon-btn" title="Link de registro"><Link2 size={12} /></button>}
+                          {(podeConfigSetor(setor) || podeConfigSub(sys)) && <button onClick={() => openModal('edit_name', 'systems', sys)} className="icon-btn" title="Editar Nome (renomear sub-setor)"><Pencil size={12} /></button>}
+                          {(podeConfigSetor(setor) || podeConfigSub(sys)) && <button onClick={() => openModal('manage_resps', 'systems', sys)} className="icon-btn" title="Equipe do sub-setor — adicionar/remover seus funcionários"><UserPlus size={12} /></button>}
+                          {isAdmin && <button onClick={() => openModal('delete_confirm', 'systems', sys)} className="icon-btn logout" title="Excluir"><Trash2 size={12} /></button>}
+                        </div>
                       </div>
                       {/* Config do sub-setor: time pega a demanda */}
-                      {(podeConfigSub(sys) || sys.auto_pool) && (
+                      {(podeConfigSub(sys) || !!sys.auto_pool) && (
                         <AutoPoolBtn table="systems" entity={sys} canEdit={podeConfigSub(sys)} />
                       )}
+                      {/* Funcionários do sub-setor */}
+                      <div>
+                        <div style={{ fontSize: '0.62rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', fontWeight: 700, marginBottom: '6px' }}>Funcionários</div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                          {funcsSub.length > 0
+                            ? funcsSub.map(m => <ChipMembro key={m.id} m={m} />)
+                            : <span style={{ fontStyle: 'italic', fontSize: '0.72rem', color: 'var(--text-muted)' }}>Nenhum</span>}
+                        </div>
+                      </div>
                     </div>
                     );
                   })}
@@ -4491,6 +5058,7 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
             table={editingTable}
             system={editingEntity}
             users={allUsers}
+            restrictToLeaderId={isAdmin ? null : user?.id}
             teamAssign={teamAssign}
             onSetAssign={setAssign}
             onClose={closeModal}
@@ -4503,7 +5071,7 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
 
       <AnimatePresence>
         {linkModal && (
-          <RegistroLinkModal tipo={linkModal.tipo} target={linkModal.target} onClose={() => setLinkModal(null)} />
+          <RegistroLinkModal tipo={linkModal.tipo} target={linkModal.target} criador={user} systems={systems} onClose={() => setLinkModal(null)} />
         )}
       </AnimatePresence>
     </div>
@@ -4511,13 +5079,15 @@ function SetoresView({ user, setores = [], systems = [], allUsers = [], onUpdate
 }
 
 // --- Sub-componente para Modais de Sistemas (Estabilidade de Portal/Animação) ---
-function SystemActionModal({ type, entityLabel = 'Sistema', table = 'setores', system, users, teamAssign = {}, onSetAssign, onClose, onSaveName, onSaveTeam, onConfirmDelete }) {
+function SystemActionModal({ type, entityLabel = 'Sistema', table = 'setores', system, users, restrictToLeaderId = null, teamAssign = {}, onSetAssign, onClose, onSaveName, onSaveTeam, onConfirmDelete }) {
   const [mounted, setMounted] = useState(false);
   const [busca, setBusca] = useState('');
   useEffect(() => setMounted(true), []);
 
   const fem = entityLabel.endsWith('a'); // concordância de gênero (ex: Categoria)
-  const usuariosFiltrados = users.filter(u => u.role !== 'admin' && (u.name || '').toLowerCase().includes(busca.toLowerCase())); // admin não entra em equipe (vê tudo)
+  // Não-admin (gerente/responsável): só enxerga os funcionários sob sua responsabilidade + os que já são membros (p/ remover).
+  const podeGerir = (u) => !restrictToLeaderId || responsaveisDe(u).includes(String(restrictToLeaderId)) || teamAssign[u.id];
+  const usuariosFiltrados = users.filter(u => u.role !== 'admin' && podeGerir(u) && (u.name || '').toLowerCase().includes(busca.toLowerCase())); // admin não entra em equipe (vê tudo)
   const gerLabel = table === 'setores' ? 'Gerente' : 'Responsável'; // no sub-setor o "gerente" é o responsável
 
   if (!mounted) return null;
